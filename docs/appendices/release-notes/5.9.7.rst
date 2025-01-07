@@ -47,6 +47,9 @@ See the :ref:`version_5.9.0` release notes for a full list of changes in the
 Fixes
 =====
 
+- Fixed an issue that caused ``FILTER`` clauses on non-aggregate window
+  functions to be ignored instead of raising an unsupported error.
+
 - Fixed an issue leading to an error when exporting big tables via ``COPY TO``
   to the :ref:`Azure Blob Storage <sql-copy-to-az>`.
   This also has a positive effect on performance.
@@ -54,3 +57,9 @@ Fixes
 - Fixed an issue that could prevent the creation of new partitions if data was
   written to a partitioned table during a rolling upgrade and that table had
   setting ``warmer.enabled`` specified before the upgrade.
+
+- Fixed an issue that incorrectly updated ``VERSION`` settings from
+  :ref:`information_schema.tables <information_schema_tables>` and
+  :ref:`information_schema.table_partitions <is_table_partitions>` for
+  partitioned tables and their new partitions to the latest version following a
+  node upgrade.

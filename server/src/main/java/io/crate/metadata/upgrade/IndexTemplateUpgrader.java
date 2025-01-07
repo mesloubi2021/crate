@@ -21,7 +21,7 @@
 
 package io.crate.metadata.upgrade;
 
-import static io.crate.metadata.doc.DocIndexMetadata.furtherColumnProperties;
+import static io.crate.metadata.upgrade.MetadataIndexUpgrader.removeInvalidPropertyGeneratedByDroppingSysCols;
 import static org.elasticsearch.common.settings.AbstractScopedSettings.ARCHIVED_SETTINGS_PREFIX;
 import static org.elasticsearch.common.settings.IndexScopedSettings.DEFAULT_SCOPED_SETTINGS;
 
@@ -48,7 +48,7 @@ import org.elasticsearch.common.xcontent.json.JsonXContent;
 import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
 
 import io.crate.common.collections.Maps;
-import io.crate.metadata.IndexParts;
+import io.crate.metadata.IndexName;
 import io.crate.server.xcontent.XContentHelper;
 
 public class IndexTemplateUpgrader implements UnaryOperator<Map<String, IndexTemplateMetadata>> {
@@ -80,7 +80,7 @@ public class IndexTemplateUpgrader implements UnaryOperator<Map<String, IndexTem
             String templateName = entry.getKey();
 
             // only process partition table templates
-            if (IndexParts.isPartitioned(templateName) == false) {
+            if (IndexName.isPartitioned(templateName) == false) {
                 upgradedTemplates.put(templateName, templateMetadata);
                 continue;
             }
@@ -95,7 +95,8 @@ public class IndexTemplateUpgrader implements UnaryOperator<Map<String, IndexTem
             try {
                 var mappingSource = XContentHelper.toMap(templateMetadata.mapping().compressedReference(), XContentType.JSON);
                 Map<String, Object> defaultMapping = Maps.get(mappingSource, "default");
-                boolean updated = populateColumnPositions(defaultMapping);
+                boolean updated = removeInvalidPropertyGeneratedByDroppingSysCols(defaultMapping);
+                updated |= populateColumnPositions(defaultMapping);
                 if (defaultMapping.containsKey("_all")) {
                     // Support for `_all` was removed (in favour of `copy_to`.
                     // We never utilized this but always set `_all: {enabled: false}` if you created a table using SQL in earlier version, so we can safely drop it.
@@ -145,7 +146,7 @@ public class IndexTemplateUpgrader implements UnaryOperator<Map<String, IndexTem
         for (var e : properties.entrySet()) {
             String name = parentName + e.getKey();
             Map<String, Object> columnProperties = (Map<String, Object>) e.getValue();
-            columnProperties = furtherColumnProperties(columnProperties);
+            columnProperties = Maps.getOrDefault(columnProperties, "inner", columnProperties);
             Integer position = (Integer) columnProperties.get("position");
             if (position == null || takenPositions.contains(position)) {
                 columnPositionResolver.addColumnToReposition(name,

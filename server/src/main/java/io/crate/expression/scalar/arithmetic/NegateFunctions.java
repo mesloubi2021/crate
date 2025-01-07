@@ -23,8 +23,10 @@ package io.crate.expression.scalar.arithmetic;
 
 import java.math.BigDecimal;
 
-import io.crate.expression.scalar.ScalarFunctionModule;
 import io.crate.expression.scalar.UnaryScalar;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
+import io.crate.metadata.Scalar;
 import io.crate.metadata.functions.Signature;
 import io.crate.types.DataTypes;
 import io.crate.types.TypeSignature;
@@ -33,64 +35,64 @@ public final class NegateFunctions {
 
     public static final String NAME = "_negate";
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                NAME,
-                TypeSignature.parse("double precision"),
-                TypeSignature.parse("double precision")
-            )
-                .withForbiddenCoercion(),
+    public static void register(Functions.Builder builder) {
+        builder.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(TypeSignature.parse("double precision"))
+                .returnType(TypeSignature.parse("double precision"))
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .forbidCoercion()
+                .build(),
             (signature, boundSignature) ->
                 new UnaryScalar<>(signature, boundSignature, DataTypes.DOUBLE, x -> x * -1)
         );
-        module.register(
-            Signature.scalar(
-                NAME,
-                DataTypes.FLOAT.getTypeSignature(),
-                DataTypes.FLOAT.getTypeSignature()
-            )
-                .withForbiddenCoercion(),
+        builder.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.FLOAT.getTypeSignature())
+                .returnType(DataTypes.FLOAT.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .forbidCoercion()
+                .build(),
             (signature, boundSignature) ->
                 new UnaryScalar<>(signature, boundSignature, DataTypes.FLOAT, x -> x * -1)
         );
-        module.register(
-            Signature.scalar(
-                NAME,
-                TypeSignature.parse("integer"),
-                TypeSignature.parse("integer")
-            )
-                .withForbiddenCoercion(),
+        builder.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(TypeSignature.parse("integer"))
+                .returnType(TypeSignature.parse("integer"))
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .forbidCoercion()
+                .build(),
             (signature, boundSignature) ->
                 new UnaryScalar<>(signature, boundSignature, DataTypes.INTEGER, x -> x * -1)
         );
-        module.register(
-            Signature.scalar(
-                NAME,
-                TypeSignature.parse("bigint"),
-                TypeSignature.parse("bigint")
-            )
-                .withForbiddenCoercion(),
+        builder.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(TypeSignature.parse("bigint"))
+                .returnType(TypeSignature.parse("bigint"))
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .forbidCoercion()
+                .build(),
             (signature, boundSignature) ->
                 new UnaryScalar<>(signature, boundSignature, DataTypes.LONG, x -> x * -1)
         );
-        module.register(
-            Signature.scalar(
-                NAME,
-                TypeSignature.parse("smallint"),
-                TypeSignature.parse("smallint")
-            )
-                .withForbiddenCoercion(),
+        builder.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(TypeSignature.parse("smallint"))
+                .returnType(TypeSignature.parse("smallint"))
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .forbidCoercion()
+                .build(),
             (signature, boundSignature) ->
                 new UnaryScalar<>(signature, boundSignature, DataTypes.SHORT, x -> (short) (x * -1))
         );
-        module.register(
-            Signature.scalar(
-                NAME,
-                DataTypes.NUMERIC.getTypeSignature(),
-                DataTypes.NUMERIC.getTypeSignature()
-            )
-                .withForbiddenCoercion(),
+        builder.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.NUMERIC.getTypeSignature())
+                .returnType(DataTypes.NUMERIC.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .forbidCoercion()
+                .build(),
             (signature, boundSignature) ->
                 new UnaryScalar<>(signature, boundSignature, DataTypes.NUMERIC, BigDecimal::negate)
         );

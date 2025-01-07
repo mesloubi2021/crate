@@ -19,9 +19,9 @@
 package org.elasticsearch.repositories;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.elasticsearch.repositories.ESBlobStoreTestCase.randomBytes;
 import static org.elasticsearch.repositories.ESBlobStoreTestCase.writeRandomBlob;
-import static org.junit.Assert.assertArrayEquals;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -51,11 +51,11 @@ public abstract class ESBlobStoreContainerTestCase extends ESTestCase {
     public void testReadNonExistingPath() throws IOException {
         try(BlobStore store = newBlobStore()) {
             final BlobContainer container = store.blobContainer(new BlobPath());
-            expectThrows(NoSuchFileException.class, () -> {
+            assertThatThrownBy(() -> {
                 try (InputStream is = container.readBlob("non-existing")) {
                     is.read();
                 }
-            });
+            }).isExactlyInstanceOf(NoSuchFileException.class);
         }
     }
 
@@ -78,7 +78,7 @@ public abstract class ESBlobStoreContainerTestCase extends ESTestCase {
                     target.append(new BytesRef(buffer, offset, read));
                 }
                 assertThat(target.length()).isEqualTo(data.length);
-                assertArrayEquals(data, Arrays.copyOfRange(target.bytes(), 0, target.length()));
+                assertThat(Arrays.copyOfRange(target.bytes(), 0, target.length())).isEqualTo(data);
             }
         }
     }
@@ -147,7 +147,8 @@ public abstract class ESBlobStoreContainerTestCase extends ESTestCase {
             BytesArray bytesArray = new BytesArray(data);
             writeBlob(container, blobName, bytesArray, true);
             // should not be able to overwrite existing blob
-            expectThrows(FileAlreadyExistsException.class, () -> writeBlob(container, blobName, bytesArray, true));
+            assertThatThrownBy(() -> writeBlob(container, blobName, bytesArray, true))
+                .isExactlyInstanceOf(FileAlreadyExistsException.class);
             container.deleteBlobsIgnoringIfNotExists(Collections.singletonList(blobName));
             writeBlob(container, blobName, bytesArray, true); // after deleting the previous blob, we should be able to write to it again
         }

@@ -24,7 +24,8 @@ package io.crate.expression.scalar.conditional;
 import static io.crate.metadata.functions.TypeVariableConstraint.typeVariable;
 
 import io.crate.data.Input;
-import io.crate.expression.scalar.ScalarFunctionModule;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -52,26 +53,26 @@ import io.crate.types.TypeSignature;
  */
 public class IfFunction extends Scalar<Object, Object> {
 
-    public static void register(ScalarFunctionModule module) {
+    public static void register(Functions.Builder module) {
         // if (condition, result)
-        module.register(
-            Signature.scalar(
-                NAME,
-                DataTypes.BOOLEAN.getTypeSignature(),
-                TypeSignature.parse("E"),
-                TypeSignature.parse("E")
-            ).withTypeVariableConstraints(typeVariable("E")),
+        module.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.BOOLEAN.getTypeSignature(),
+                    TypeSignature.parse("E"))
+                .returnType(TypeSignature.parse("E"))
+                .features(Feature.DETERMINISTIC)
+                .typeVariableConstraints(typeVariable("E"))
+                .build(),
             IfFunction::new
         );
         // if (condition, result, default)
-        module.register(
-            Signature.scalar(
-                NAME,
-                DataTypes.BOOLEAN.getTypeSignature(),
-                TypeSignature.parse("E"),
-                TypeSignature.parse("E"),
-                TypeSignature.parse("E")
-            ).withTypeVariableConstraints(typeVariable("E")),
+        module.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.BOOLEAN.getTypeSignature(), TypeSignature.parse("E"), TypeSignature.parse("E"))
+                .returnType(TypeSignature.parse("E"))
+                .features(Feature.DETERMINISTIC)
+                .typeVariableConstraints(typeVariable("E"))
+                .build(),
             IfFunction::new
         );
     }

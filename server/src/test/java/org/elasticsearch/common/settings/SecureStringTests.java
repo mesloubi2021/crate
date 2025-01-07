@@ -21,14 +21,9 @@
 
 package org.elasticsearch.common.settings;
 
-import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.not;
-import static org.hamcrest.Matchers.sameInstance;
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.fail;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.fail;
 
 import java.util.Arrays;
 
@@ -43,8 +38,8 @@ public class SecureStringTests extends ESTestCase {
         SecureString secureString = new SecureString(password);
         assertSecureStringEqualToChars(password, secureString);
         try (SecureString copy = secureString.clone()) {
-            assertArrayEquals(password, copy.getChars());
-            assertThat(copy.getChars(), not(sameInstance(password)));
+            assertThat(copy.getChars()).isEqualTo(password);
+            assertThat(copy.getChars()).isNotSameAs(password);
         }
         assertSecureStringEqualToChars(password, secureString);
     }
@@ -55,13 +50,13 @@ public class SecureStringTests extends ESTestCase {
         SecureString secureString = new SecureString(password);
         assertSecureStringEqualToChars(password, secureString);
         SecureString copy = secureString.clone();
-        assertArrayEquals(password, copy.getChars());
-        assertThat(copy.getChars(), not(sameInstance(password)));
+        assertThat(copy.getChars()).isEqualTo(password);
+        assertThat(copy.getChars()).isNotSameAs(password);
         final char[] passwordCopy = Arrays.copyOf(password, password.length);
-        assertArrayEquals(password, passwordCopy);
+        assertThat(passwordCopy).isEqualTo(password);
         secureString.close();
-        assertNotEquals(password[0], passwordCopy[0]);
-        assertArrayEquals(passwordCopy, copy.getChars());
+        assertThat(passwordCopy[0]).isNotEqualTo(password[0]);
+        assertThat(copy.getChars()).isEqualTo(passwordCopy);
     }
 
     @Test
@@ -70,15 +65,16 @@ public class SecureStringTests extends ESTestCase {
         SecureString secureString = new SecureString(password);
         assertSecureStringEqualToChars(password, secureString);
         SecureString copy = secureString.clone();
-        assertArrayEquals(password, copy.getChars());
-        assertThat(copy.getChars(), not(sameInstance(password)));
+        assertThat(copy.getChars()).isEqualTo(password);
+        assertThat(copy.getChars()).isNotSameAs(password);
         copy.close();
         if (randomBoolean()) {
             // close another time and no exception is thrown
             copy.close();
         }
-        IllegalStateException e = expectThrows(IllegalStateException.class, copy::getChars);
-        assertThat(e.getMessage(), containsString("already been closed"));
+        assertThatThrownBy(copy::getChars)
+            .isExactlyInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("already been closed");
     }
 
     @Test
@@ -91,8 +87,9 @@ public class SecureStringTests extends ESTestCase {
             // close another time and no exception is thrown
             secureString.close();
         }
-        IllegalStateException e = expectThrows(IllegalStateException.class, secureString::clone);
-        assertThat(e.getMessage(), containsString("already been closed"));
+        assertThatThrownBy(secureString::clone)
+            .isExactlyInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("already been closed");
     }
 
     private void assertSecureStringEqualToChars(char[] expected, SecureString secureString) {
@@ -101,7 +98,7 @@ public class SecureStringTests extends ESTestCase {
             if (pos >= expected.length) {
                 fail("Index " + i + " greated than or equal to array length " + expected.length);
             } else {
-                assertEquals(expected[pos++], (char) i);
+                assertThat((char) i).isEqualTo(expected[pos++]);
             }
         }
     }

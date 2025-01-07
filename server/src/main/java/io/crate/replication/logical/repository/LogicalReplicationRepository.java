@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -56,7 +57,6 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.snapshots.IndexShardSnapshotStatus;
 import org.elasticsearch.index.store.Store;
@@ -255,7 +255,7 @@ public class LogicalReplicationRepository extends AbstractLifecycleComponent imp
                                  final Metadata clusterMetadata,
                                  SnapshotInfo snapshotInfo,
                                  Version repositoryMetaVersion,
-                                 Function<ClusterState, ClusterState> stateTransformer,
+                                 UnaryOperator<ClusterState> stateTransformer,
                                  final ActionListener<RepositoryData> listener) {
         throw new UnsupportedOperationException("Operation not permitted");
     }
@@ -290,7 +290,6 @@ public class LogicalReplicationRepository extends AbstractLifecycleComponent imp
 
     @Override
     public void snapshotShard(Store store,
-                              MapperService mapperService,
                               SnapshotId snapshotId,
                               IndexId indexId,
                               IndexCommit snapshotIndexCommit,
@@ -387,7 +386,7 @@ public class LogicalReplicationRepository extends AbstractLifecycleComponent imp
                 // make sure the store is not released until we are done.
                 var fileMetadata = new ArrayList<>(metadataSnapshot.asMap().values());
 
-                FutureActionListener<Void, Void> chunkTransferCompleted = FutureActionListener.newInstance();
+                FutureActionListener<Void> chunkTransferCompleted = new FutureActionListener<>();
                 chunkTransferCompleted.whenComplete((result, throwable) -> {
                     if (throwable == null) {
                         LOGGER.info("Restore successful for {}", store.shardId());
@@ -452,7 +451,7 @@ public class LogicalReplicationRepository extends AbstractLifecycleComponent imp
             .metadata(true)
             .nodes(includeNodes)
             .routingTable(includeRouting)
-            .indicesOptions(IndicesOptions.strictSingleIndexNoExpandForbidClosed())
+            .indicesOptions(IndicesOptions.STRICT_SINGLE_INDEX_NO_EXPAND_FORBID_CLOSED)
             .waitForTimeout(new TimeValue(REMOTE_CLUSTER_REPO_REQ_TIMEOUT_IN_MILLI_SEC));
         return remoteClient.admin().cluster().state(clusterStateRequest);
     }

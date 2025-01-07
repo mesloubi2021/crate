@@ -30,12 +30,13 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.SequencedCollection;
 import java.util.Set;
 
 import org.jetbrains.annotations.Nullable;
 
 import io.crate.analyze.OrderBy;
-import io.crate.common.collections.Lists2;
+import io.crate.common.collections.Lists;
 import io.crate.data.Row;
 import io.crate.execution.dsl.phases.ExecutionPhases;
 import io.crate.execution.dsl.phases.MergePhase;
@@ -47,7 +48,6 @@ import io.crate.expression.symbol.AggregateMode;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.ScopedSymbol;
 import io.crate.expression.symbol.Symbol;
-import io.crate.expression.symbol.SymbolVisitors;
 import io.crate.expression.symbol.Symbols;
 import io.crate.metadata.Reference;
 import io.crate.metadata.RowGranularity;
@@ -110,10 +110,10 @@ public class GroupHashAggregate extends ForwardingLogicalPlan {
     public GroupHashAggregate(LogicalPlan source, List<Symbol> groupKeys, List<Function> aggregates) {
         super(source);
         this.aggregates = List.copyOf(new LinkedHashSet<>(aggregates));
-        this.outputs = Lists2.concat(groupKeys, this.aggregates);
+        this.outputs = Lists.concat(groupKeys, this.aggregates);
         this.groupKeys = groupKeys;
         for (Symbol key : groupKeys) {
-            if (Symbols.containsCorrelatedSubQuery(key)) {
+            if (key.any(Symbol.IS_CORRELATED_SUBQUERY)) {
                 throw new UnsupportedOperationException(
                     "Cannot use correlated subquery in GROUP BY clause");
             }
@@ -158,8 +158,7 @@ public class GroupHashAggregate extends ForwardingLogicalPlan {
                 aggregates,
                 paramBinder,
                 AggregateMode.ITER_FINAL,
-                source.preferShardProjections() ? RowGranularity.SHARD : RowGranularity.CLUSTER,
-                plannerContext.transactionContext().sessionSettings().searchPath()
+                source.preferShardProjections() ? RowGranularity.SHARD : RowGranularity.CLUSTER
             );
             executionPlan.addProjection(groupProjection, NO_LIMIT, 0, null);
             return executionPlan;
@@ -174,8 +173,7 @@ public class GroupHashAggregate extends ForwardingLogicalPlan {
                         aggregates,
                         paramBinder,
                         AggregateMode.ITER_PARTIAL,
-                        RowGranularity.SHARD,
-                        plannerContext.transactionContext().sessionSettings().searchPath()
+                        RowGranularity.SHARD
                     )
                 );
                 executionPlan.addProjection(
@@ -185,8 +183,7 @@ public class GroupHashAggregate extends ForwardingLogicalPlan {
                         aggregates,
                         paramBinder,
                         AggregateMode.PARTIAL_FINAL,
-                        RowGranularity.NODE,
-                        plannerContext.transactionContext().sessionSettings().searchPath()
+                        RowGranularity.NODE
                     ),
                     NO_LIMIT,
                     0,
@@ -201,8 +198,7 @@ public class GroupHashAggregate extends ForwardingLogicalPlan {
                         aggregates,
                         paramBinder,
                         AggregateMode.ITER_FINAL,
-                        RowGranularity.NODE,
-                        plannerContext.transactionContext().sessionSettings().searchPath()
+                        RowGranularity.NODE
                     ),
                     NO_LIMIT,
                     0,
@@ -218,8 +214,7 @@ public class GroupHashAggregate extends ForwardingLogicalPlan {
             aggregates,
             paramBinder,
             AggregateMode.ITER_PARTIAL,
-            source.preferShardProjections() ? RowGranularity.SHARD : RowGranularity.NODE,
-            plannerContext.transactionContext().sessionSettings().searchPath()
+            source.preferShardProjections() ? RowGranularity.SHARD : RowGranularity.NODE
         );
         executionPlan.addProjection(toPartial);
         executionPlan.setDistributionInfo(DistributionInfo.DEFAULT_MODULO);
@@ -230,8 +225,7 @@ public class GroupHashAggregate extends ForwardingLogicalPlan {
             aggregates,
             paramBinder,
             AggregateMode.PARTIAL_FINAL,
-            RowGranularity.CLUSTER,
-            plannerContext.transactionContext().sessionSettings().searchPath()
+            RowGranularity.CLUSTER
         );
         return createMerge(
             plannerContext,
@@ -247,19 +241,19 @@ public class GroupHashAggregate extends ForwardingLogicalPlan {
     }
 
     @Override
-    public LogicalPlan pruneOutputsExcept(Collection<Symbol> outputsToKeep) {
+    public LogicalPlan pruneOutputsExcept(SequencedCollection<Symbol> outputsToKeep) {
         // Keep the same order and avoid introducing an Eval
-        HashSet<Symbol> toKeep = new LinkedHashSet<>();
+        ArrayList<Symbol> toKeep = new ArrayList<>();
         // We cannot prune groupKeys, even if they are not used in the outputs, because it would change the result semantically
         for (Symbol groupKey : groupKeys) {
-            SymbolVisitors.intersection(groupKey, source.outputs(), toKeep::add);
+            Symbols.intersection(groupKey, source.outputs(), toKeep::add);
         }
         ArrayList<Function> newAggregates = new ArrayList<>();
         for (Symbol outputToKeep : outputsToKeep) {
-            SymbolVisitors.intersection(outputToKeep, aggregates, newAggregates::add);
+            Symbols.intersection(outputToKeep, aggregates, newAggregates::add);
         }
         for (Function newAggregate : newAggregates) {
-            SymbolVisitors.intersection(newAggregate, source.outputs(), toKeep::add);
+            Symbols.intersection(newAggregate, source.outputs(), toKeep::add);
         }
         LogicalPlan newSource = source.pruneOutputsExcept(toKeep);
         if (newSource == source && aggregates.size() == newAggregates.size()) {
@@ -270,7 +264,7 @@ public class GroupHashAggregate extends ForwardingLogicalPlan {
 
     @Override
     public LogicalPlan replaceSources(List<LogicalPlan> sources) {
-        return new GroupHashAggregate(Lists2.getOnlyElement(sources), groupKeys, aggregates);
+        return new GroupHashAggregate(Lists.getOnlyElement(sources), groupKeys, aggregates);
     }
 
     private ExecutionPlan createMerge(PlannerContext plannerContext,
@@ -304,11 +298,11 @@ public class GroupHashAggregate extends ForwardingLogicalPlan {
      *         Each shard has "group or row authority"
      */
     private boolean shardsContainAllGroupKeyValues() {
-        return source instanceof Collect &&
-               ((Collect) source).tableInfo instanceof DocTableInfo &&
+        return source instanceof Collect collect &&
+               collect.tableInfo instanceof DocTableInfo docTableInfo &&
                GroupByConsumer.groupedByClusteredColumnOrPrimaryKeys(
-                   ((DocTableInfo) ((Collect) source).tableInfo),
-                   ((Collect) source).mutableBoundWhere,
+                   docTableInfo,
+                   collect.mutableBoundWhere,
                    groupKeys);
     }
 
@@ -330,11 +324,11 @@ public class GroupHashAggregate extends ForwardingLogicalPlan {
     public void print(PrintContext printContext) {
         printContext
             .text("GroupHashAggregate[")
-            .text(Lists2.joinOn(", ", groupKeys, Symbol::toString));
+            .text(Lists.joinOn(", ", groupKeys, Symbol::toString));
         if (!aggregates.isEmpty()) {
             printContext
                 .text(" | ")
-                .text(Lists2.joinOn(", ", aggregates, Symbol::toString));
+                .text(Lists.joinOn(", ", aggregates, Symbol::toString));
         }
         printContext
             .text("]");

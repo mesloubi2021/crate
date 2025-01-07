@@ -27,6 +27,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import io.crate.data.Input;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -36,27 +38,34 @@ import io.crate.types.ArrayType;
 import io.crate.types.DataType;
 import io.crate.types.TypeSignature;
 
-class ArrayAppendFunction extends Scalar<List<Object>, Object> {
+public class ArrayAppendFunction extends Scalar<List<Object>, Object> {
 
     public static final String NAME = "array_append";
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                NAME,
-                TypeSignature.parse("array(E)"),
-                TypeSignature.parse("E"),
-                TypeSignature.parse("array(E)")
-            ).withTypeVariableConstraints(typeVariable("E")),
-            ArrayAppendFunction::new
+    public static void register(Functions.Builder builder) {
+        builder.add(
+                Signature.builder(NAME, FunctionType.SCALAR)
+                        .argumentTypes(TypeSignature.parse("array(E)"),
+                                TypeSignature.parse("E"))
+                        .returnType(TypeSignature.parse("array(E)"))
+                        .typeVariableConstraints(typeVariable("E"))
+                        .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+                        .build(),
+                ArrayAppendFunction::new
         );
     }
 
     private final DataType<?> innerType;
+    private final boolean calledByOperator;
 
     ArrayAppendFunction(Signature signature, BoundSignature boundSignature) {
+        this(signature, boundSignature, false);
+    }
+
+    ArrayAppendFunction(Signature signature, BoundSignature boundSignature, boolean calledByOperator) {
         super(signature, boundSignature);
         this.innerType = ((ArrayType<?>) boundSignature.returnType()).innerType();
+        this.calledByOperator = calledByOperator;
     }
 
     @Override
@@ -70,6 +79,11 @@ class ArrayAppendFunction extends Scalar<List<Object>, Object> {
                 resultList.add(innerType.sanitizeValue(value));
             }
         }
+        if (valueToAdd == null && calledByOperator) {
+            // array || null -> array (null is ignored)
+            return resultList;
+        }
+
         resultList.add(innerType.sanitizeValue(valueToAdd));
         return resultList;
     }

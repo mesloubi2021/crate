@@ -21,10 +21,7 @@
 
 package io.crate.execution.jobs;
 
-import static org.hamcrest.Matchers.hasKey;
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -35,14 +32,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Collections;
-import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.Version;
 import org.elasticsearch.test.ESTestCase;
-import org.hamcrest.Matchers;
 import org.junit.Test;
 import org.mockito.Mockito;
 
@@ -80,11 +76,11 @@ public class RootTaskTest extends ESTestCase {
         builder.addTask(ctx2);
         RootTask rootTask = builder.build();
 
-        assertThat(rootTask.kill(null), Matchers.greaterThanOrEqualTo(1L));
-        assertThat(rootTask.kill(null), is(0L)); // Everything is killed already
+        assertThat(rootTask.kill(null)).isGreaterThanOrEqualTo(1);
+        assertThat(rootTask.kill(null)).isZero(); // Everything is killed already
 
-        assertThat(ctx1.numKill.get(), is(1));
-        assertThat(ctx2.numKill.get(), is(1));
+        assertThat(ctx1.numKill.get()).isEqualTo(1);
+        assertThat(ctx2.numKill.get()).isEqualTo(1);
     }
 
     @Test
@@ -163,15 +159,15 @@ public class RootTaskTest extends ESTestCase {
         // other contexts must be killed with same failure
         verify(distResultRXTask, times(1)).kill(failure);
 
-        assertThat(rootTask.getTask(1).completionFuture().isDone(), is(true));
-        assertThat(rootTask.getTask(2).completionFuture().isDone(), is(true));
+        assertThat(rootTask.getTask(1).completionFuture().isDone()).isTrue();
+        assertThat(rootTask.getTask(2).completionFuture().isDone()).isTrue();
     }
 
     @Test
     public void testEnablingProfilingGathersExecutionTimes() throws Throwable {
         RootTask.Builder builder =
             new RootTask.Builder(logger, UUID.randomUUID(), "dummy-user", coordinatorNode, Collections.emptySet(), mock(JobsLogs.class));
-        ProfilingContext profilingContext = new ProfilingContext(List.of());
+        ProfilingContext profilingContext = new ProfilingContext(Map.of());
         builder.profilingContext(profilingContext);
 
         AbstractTaskTest.TestingTask ctx1 = new AbstractTaskTest.TestingTask(1);
@@ -185,14 +181,9 @@ public class RootTaskTest extends ESTestCase {
         Thread.sleep(5L);
         // kill because the testing subcontexts would run infinitely
         rootTask.kill(null);
-        assertThat(rootTask.executionTimes(), hasKey("1-TestingTask"));
-        assertThat(
-            ((double) rootTask.executionTimes().get("1-TestingTask")),
-            Matchers.greaterThan(0d));
-        assertTrue(rootTask.executionTimes().containsKey("2-TestingTask"));
-        assertThat(
-            ((double) rootTask.executionTimes().get("2-TestingTask")),
-            Matchers.greaterThan(0d));
-        assertThat(rootTask.completionFuture().isCompletedExceptionally(), is(true));
+        assertThat(rootTask.executionTimes()).containsKeys("1-TestingTask", "2-TestingTask");
+        assertThat(((double) rootTask.executionTimes().get("1-TestingTask"))).isGreaterThan(0);
+        assertThat(((double) rootTask.executionTimes().get("2-TestingTask"))).isGreaterThan(0);
+        assertThat(rootTask.completionFuture()).isCompletedExceptionally();
     }
 }

@@ -24,80 +24,76 @@ package io.crate.planner.optimizer.symbol;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
-import java.util.function.Function;
-import java.util.function.Supplier;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.Version;
 
 import io.crate.analyze.expressions.ExpressionAnalyzer;
-import io.crate.common.collections.Lists2;
 import io.crate.exceptions.ConversionException;
-import io.crate.expression.symbol.AliasResolver;
 import io.crate.expression.symbol.FunctionCopyVisitor;
 import io.crate.expression.symbol.Symbol;
-import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.NodeContext;
+import io.crate.metadata.TransactionContext;
 import io.crate.planner.PlannerContext;
 import io.crate.planner.optimizer.matcher.Captures;
 import io.crate.planner.optimizer.matcher.Match;
 import io.crate.planner.optimizer.symbol.rule.MoveArrayLengthOnReferenceCastToLiteralCastInsideOperators;
-import io.crate.planner.optimizer.symbol.rule.MoveReferenceCastToLiteralCastOnAnyOperatorsWhenLeftIsReference;
-import io.crate.planner.optimizer.symbol.rule.MoveReferenceCastToLiteralCastOnAnyOperatorsWhenRightIsReference;
+import io.crate.planner.optimizer.symbol.rule.MoveReferenceCastToLiteralCastOnArrayOperatorsWhenLeftIsReference;
+import io.crate.planner.optimizer.symbol.rule.MoveReferenceCastToLiteralCastOnArrayOperatorsWhenRightIsReference;
 import io.crate.planner.optimizer.symbol.rule.MoveSubscriptOnReferenceCastToLiteralCastInsideOperators;
+import io.crate.planner.optimizer.symbol.rule.RemoveRedundantImplicitCastOverReferences;
 import io.crate.planner.optimizer.symbol.rule.SimplifyEqualsOperationOnIdenticalReferences;
 import io.crate.planner.optimizer.symbol.rule.SwapCastsInComparisonOperators;
 import io.crate.planner.optimizer.symbol.rule.SwapCastsInLikeOperators;
+import io.crate.session.Session;
 
 public class Optimizer {
 
-    public static Symbol optimizeCasts(Symbol query, PlannerContext plannerContext) {
-        Optimizer optimizer = new Optimizer(
-            plannerContext.transactionContext(),
-            plannerContext.nodeContext(),
-            () -> plannerContext.clusterState().nodes().getMinNodeVersion(),
-            List.of(
-                SwapCastsInComparisonOperators::new,
-                SwapCastsInLikeOperators::new,
-                MoveReferenceCastToLiteralCastOnAnyOperatorsWhenRightIsReference::new,
-                MoveReferenceCastToLiteralCastOnAnyOperatorsWhenLeftIsReference::new,
-                MoveSubscriptOnReferenceCastToLiteralCastInsideOperators::new,
-                MoveArrayLengthOnReferenceCastToLiteralCastInsideOperators::new,
-                SimplifyEqualsOperationOnIdenticalReferences::new
-            )
-        );
+    private static final Logger LOGGER = LogManager.getLogger(Optimizer.class);
+    private static final List<Rule<?>> RULES = List.of(
+        new SwapCastsInComparisonOperators(),
+        new SwapCastsInLikeOperators(),
+        new MoveReferenceCastToLiteralCastOnArrayOperatorsWhenRightIsReference(),
+        new MoveReferenceCastToLiteralCastOnArrayOperatorsWhenLeftIsReference(),
+        new MoveSubscriptOnReferenceCastToLiteralCastInsideOperators(),
+        new MoveArrayLengthOnReferenceCastToLiteralCastInsideOperators(),
+        new SimplifyEqualsOperationOnIdenticalReferences(),
+        new RemoveRedundantImplicitCastOverReferences()
+    );
+
+    public static Symbol optimizeCasts(Symbol query, PlannerContext plannerCtx) {
+        return optimizeCasts(query, plannerCtx.transactionContext(), plannerCtx.nodeContext(), plannerCtx.timeoutToken());
+    }
+
+    public static Symbol optimizeCasts(Symbol query,
+                                       TransactionContext txnCtx,
+                                       NodeContext nodeCtx,
+                                       Session.TimeoutToken timeoutToken) {
+        Optimizer optimizer = new Optimizer(txnCtx, nodeCtx, timeoutToken);
         return optimizer.optimize(query);
     }
 
-    private static final Logger LOGGER = LogManager.getLogger(Optimizer.class);
-
-    private final List<Rule<?>> rules;
-    private final Supplier<Version> minNodeVersionInCluster;
     private final NodeContext nodeCtx;
     private final Visitor visitor = new Visitor();
+    private final FunctionLookup functionLookup;
+    private final Session.TimeoutToken timeoutToken;
 
-    public Optimizer(CoordinatorTxnCtx coordinatorTxnCtx,
-                     NodeContext nodeCtx,
-                     Supplier<Version> minNodeVersionInCluster,
-                     List<Function<FunctionSymbolResolver, Rule<?>>> rules) {
-        FunctionSymbolResolver functionResolver =
-            (f, args) -> {
-                try {
-                    return ExpressionAnalyzer.allocateFunction(
-                        f,
-                        args,
-                        null,
-                        null,
-                        coordinatorTxnCtx,
-                        nodeCtx);
-                } catch (ConversionException e) {
-                    return null;
-                }
-            };
-        this.rules = Lists2.map(rules, r -> r.apply(functionResolver));
-        this.minNodeVersionInCluster = minNodeVersionInCluster;
+    public Optimizer(TransactionContext txnCtx, NodeContext nodeCtx, Session.TimeoutToken timeoutToken) {
+        functionLookup = (f, args) -> {
+            try {
+                return ExpressionAnalyzer.allocateFunction(
+                    f,
+                    args,
+                    null,
+                    null,
+                    txnCtx,
+                    nodeCtx);
+            } catch (ConversionException e) {
+                return null;
+            }
+        };
         this.nodeCtx = nodeCtx;
+        this.timeoutToken = timeoutToken;
     }
 
     public Symbol optimize(Symbol node) {
@@ -111,16 +107,17 @@ public class Optimizer {
         boolean done = false;
         int numIterations = 0;
         while (!done && numIterations < 10_000) {
+            if (numIterations % 100 == 0) {
+                // Intermediate check to throw early.
+                // Overall planning time is checked one more time right before execute once plan is created
+                timeoutToken.check();
+            }
             done = true;
-            Version minVersion = minNodeVersionInCluster.get();
-            for (Rule<?> rule : rules) {
-                if (minVersion.before(rule.requiredVersion())) {
-                    continue;
-                }
+            for (Rule<?> rule : RULES) {
                 Symbol transformed = tryMatchAndApply(rule, node, nodeCtx);
                 if (transformed != null) {
                     if (isTraceEnabled) {
-                        LOGGER.trace("Rule '" + rule.getClass().getSimpleName() + "' transformed the symbol");
+                        LOGGER.trace("Rule '{}' transformed the symbol", rule.getClass().getSimpleName());
                     }
                     node = transformed;
                     done = false;
@@ -137,19 +134,18 @@ public class Optimizer {
         Match<T> match = rule.pattern().accept(node, Captures.empty());
         if (match.isPresent()) {
             if (LOGGER.isTraceEnabled()) {
-                LOGGER.trace("Rule '" + rule.getClass().getSimpleName() + "' matched");
+                LOGGER.trace("Rule '{}' matched", rule.getClass().getSimpleName());
             }
-            return rule.apply(match.value(), match.captures(), nodeCtx, visitor.getParentFunction());
+            return rule.apply(match.value(), match.captures(), nodeCtx, functionLookup, visitor.getParentFunction());
         }
         return null;
     }
 
     private class Visitor extends FunctionCopyVisitor<Void> {
-        private Deque<io.crate.expression.symbol.Function> visitedFunctions = new ArrayDeque<>();
+        private final Deque<io.crate.expression.symbol.Function> visitedFunctions = new ArrayDeque<>();
 
         @Override
         public Symbol visitFunction(io.crate.expression.symbol.Function symbol, Void context) {
-            symbol = (io.crate.expression.symbol.Function) symbol.accept(AliasResolver.INSTANCE, null);
             visitedFunctions.push(symbol);
             var maybeTransformedSymbol = tryApplyRules(symbol);
             if (symbol.equals(maybeTransformedSymbol) == false) {
@@ -171,5 +167,4 @@ public class Optimizer {
             return parent;
         }
     }
-
 }

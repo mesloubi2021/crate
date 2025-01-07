@@ -31,6 +31,8 @@ import java.util.List;
 import java.util.Set;
 
 import io.crate.data.Input;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -40,26 +42,27 @@ import io.crate.types.ArrayType;
 import io.crate.types.DataType;
 import io.crate.types.TypeSignature;
 
-class ArrayUniqueFunction extends Scalar<List<Object>, List<Object>> {
+public class ArrayUniqueFunction extends Scalar<List<Object>, List<Object>> {
 
     public static final String NAME = "array_unique";
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                NAME,
-                TypeSignature.parse("array(E)"),
-                TypeSignature.parse("array(E)")
-            ).withTypeVariableConstraints(typeVariable("E")),
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(TypeSignature.parse("array(E)"))
+                .returnType(TypeSignature.parse("array(E)"))
+                .typeVariableConstraints(typeVariable("E"))
+                .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+                .build(),
             ArrayUniqueFunction::new
         );
-        module.register(
-            Signature.scalar(
-                NAME,
-                TypeSignature.parse("array(E)"),
-                TypeSignature.parse("array(E)"),
-                TypeSignature.parse("array(E)")
-            ).withTypeVariableConstraints(typeVariable("E")),
+        module.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(TypeSignature.parse("array(E)"), TypeSignature.parse("array(E)"))
+                .returnType(TypeSignature.parse("array(E)"))
+                .typeVariableConstraints(typeVariable("E"))
+                .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+                .build(),
             ArrayUniqueFunction::new
         );
     }

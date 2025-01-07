@@ -25,6 +25,10 @@ extensions.append('crate.sphinx.csv')
 
 linkcheck_ignore = [
     'https://www.iso.org/obp/ui/.*',  # Breaks accessibility via JS ¯\_(ツ)_/¯
-    'https://www.codeproject.com/',   # Went down on 2023-09-28
 ]
 linkcheck_retries = 3
+
+# Enable version chooser.
+html_context.update({
+    "display_version": True,
+})

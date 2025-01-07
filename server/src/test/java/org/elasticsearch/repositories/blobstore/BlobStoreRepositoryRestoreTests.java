@@ -19,19 +19,15 @@
 
 package org.elasticsearch.repositories.blobstore;
 
-import static org.hamcrest.Matchers.containsString;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.function.Function;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
 import org.apache.lucene.store.Directory;
@@ -106,7 +102,7 @@ public class BlobStoreRepositoryRestoreTests extends IndexShardTestCase {
 
             // capture current store files
             final Store.MetadataSnapshot storeFiles = shard.snapshotStoreMetadata();
-            assertFalse(storeFiles.asMap().isEmpty());
+            assertThat(storeFiles.asMap().isEmpty()).isFalse();
 
             // close the shard
             closeShards(shard);
@@ -143,8 +139,8 @@ public class BlobStoreRepositoryRestoreTests extends IndexShardTestCase {
 
             for (StoreFileMetadata storeFile : storeFiles) {
                 String fileName = storeFile.name();
-                assertTrue("File [" + fileName + "] does not exist in store directory", directoryFiles.contains(fileName));
-                assertEquals(storeFile.length(), shard.store().directory().fileLength(fileName));
+                assertThat(directoryFiles.contains(fileName)).as("File [" + fileName + "] does not exist in store directory").isTrue();
+                assertThat(shard.store().directory().fileLength(fileName)).isEqualTo(storeFile.length());
             }
         } finally {
             if (shard != null && shard.state() != IndexShardState.CLOSED) {
@@ -178,7 +174,7 @@ public class BlobStoreRepositoryRestoreTests extends IndexShardTestCase {
             final Repository repository = createRepository();
             final Snapshot snapshot = new Snapshot(repository.getMetadata().name(), new SnapshotId(randomAlphaOfLength(10), "_uuid"));
             final String shardGen = snapshotShard(shard, snapshot, repository);
-            assertNotNull(shardGen);
+            assertThat(shardGen).isNotNull();
             final Snapshot snapshotWithSameName = new Snapshot(repository.getMetadata().name(), new SnapshotId(
                 snapshot.getSnapshotId().getName(), "_uuid2"));
             final ShardGenerations shardGenerations = ShardGenerations.builder().put(indexId, 0, shardGen).build();
@@ -190,10 +186,10 @@ public class BlobStoreRepositoryRestoreTests extends IndexShardTestCase {
                     new SnapshotInfo(snapshot.getSnapshotId(), shardGenerations.indices().stream()
                         .map(IndexId::getName).collect(Collectors.toList()), 0L, null, 1L, 6,
                         Collections.emptyList(), true),
-                    Version.CURRENT, Function.identity(), f));
-            IndexShardSnapshotFailedException isfe = expectThrows(IndexShardSnapshotFailedException.class,
-                                                                  () -> snapshotShard(shard, snapshotWithSameName, repository));
-            assertThat(isfe.getMessage(), containsString("Duplicate snapshot name"));
+                    Version.CURRENT, UnaryOperator.identity(), f));
+            assertThatThrownBy(() -> snapshotShard(shard, snapshotWithSameName, repository))
+                .isExactlyInstanceOf(IndexShardSnapshotFailedException.class)
+                .hasMessageContaining("Duplicate snapshot name");
         } finally {
             if (shard != null && shard.state() != IndexShardState.CLOSED) {
                 try {
@@ -210,7 +206,7 @@ public class BlobStoreRepositoryRestoreTests extends IndexShardTestCase {
         Settings settings = Settings.builder().put("location", randomAlphaOfLength(10)).build();
         RepositoryMetadata repositoryMetadata = new RepositoryMetadata(randomAlphaOfLength(10), FsRepository.TYPE, settings);
         final ClusterService clusterService = BlobStoreTestUtil.mockClusterService(repositoryMetadata);
-        final FsRepository repository = new FsRepository(repositoryMetadata, createEnvironment(), xContentRegistry(), clusterService,
+        final FsRepository repository = new FsRepository(repositoryMetadata, createEnvironment(), writableRegistry(), xContentRegistry(), clusterService,
             new RecoverySettings(Settings.EMPTY, new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS))) {
             @Override
             protected void assertSnapshotOrGenericThread() {

@@ -21,17 +21,19 @@
 
 package io.crate.expression.reference.sys.shard;
 
-import io.crate.common.collections.Lists2;
-import io.crate.metadata.IndexParts;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Supplier;
+
 import org.elasticsearch.cluster.routing.ShardRoutingState;
 import org.elasticsearch.cluster.routing.allocation.NodeAllocationResult;
 import org.elasticsearch.cluster.routing.allocation.ShardAllocationDecision;
 import org.elasticsearch.index.shard.ShardId;
-
 import org.jetbrains.annotations.Nullable;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.function.Supplier;
+
+import io.crate.common.collections.Lists;
+import io.crate.metadata.IndexName;
+import io.crate.metadata.IndexParts;
 
 public class SysAllocation {
 
@@ -52,23 +54,23 @@ public class SysAllocation {
                          boolean isPrimary) {
         this.shardId = shardId;
         this.currentState = routingState;
-        this.indexParts = new IndexParts(shardId.getIndexName());
+        this.indexParts = IndexName.decode(shardId.getIndexName());
         this.computeDecision = computeDecision;
         this.nodeId = nodeId;
         this.primary = isPrimary;
     }
 
     public String tableSchema() {
-        return indexParts.getSchema();
+        return indexParts.schema();
     }
 
     public String tableName() {
-        return indexParts.getTable();
+        return indexParts.table();
     }
 
     @Nullable
     public String partitionIdent() {
-        return indexParts.isPartitioned() ? indexParts.getPartitionIdent() : null;
+        return indexParts.isPartitioned() ? indexParts.partitionIdent() : null;
     }
 
     public int shardId() {
@@ -112,10 +114,10 @@ public class SysAllocation {
     private List<SysAllocationNodeDecision> nodeDecisions() {
         assert decision != null : "decision must be initialized to generate nodeDecisions";
         if (decision.getMoveDecision().isDecisionTaken()) {
-            return Lists2.map(
+            return Lists.map(
                 decision.getMoveDecision().getNodeDecisions(), SysAllocationNodeDecision::fromNodeAllocationResult);
         } else if (decision.getAllocateDecision().isDecisionTaken()) {
-            return Lists2.map(
+            return Lists.map(
                 decision.getAllocateDecision().getNodeDecisions(), SysAllocationNodeDecision::fromNodeAllocationResult);
         } else {
             return List.of();

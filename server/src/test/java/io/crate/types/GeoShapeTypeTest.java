@@ -21,30 +21,28 @@
 
 package io.crate.types;
 
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.notNullValue;
-import static org.hamcrest.Matchers.nullValue;
-import static org.junit.Assert.assertThat;
+import static com.carrotsearch.randomizedtesting.RandomizedTest.assumeFalse;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Map;
+import java.util.function.UnaryOperator;
 
-import org.elasticsearch.common.io.stream.BytesStreamOutput;
-import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.xcontent.DeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
-import org.elasticsearch.test.ESTestCase;
 import org.junit.Test;
 import org.locationtech.spatial4j.shape.Shape;
 
 import io.crate.geo.GeoJSONUtils;
 import io.crate.geo.GeoJSONUtilsTest;
 
-public class GeoShapeTypeTest extends ESTestCase {
+public class GeoShapeTypeTest extends DataTypeTestCase<Map<String, Object>> {
 
-    private static final List<String> WKT = List.of(
+    private final List<String> wkt = List.of(
         "multipolygon empty",
         "MULTIPOLYGON (" +
         "  ((40 40, 20 45, 45 30, 40 40)),\n" +
@@ -57,6 +55,13 @@ public class GeoShapeTypeTest extends ESTestCase {
         "multipoint (10 10, 20 20)"
     );
 
+    private final GeoShapeType type = GeoShapeType.INSTANCE;
+
+    @Override
+    protected DataDef<Map<String, Object>> getDataDef() {
+        return DataDef.fromType(type);
+    }
+
     private static Map<String, Object> parse(String json) {
         try {
             return JsonXContent.JSON_XCONTENT.createParser(
@@ -65,11 +70,11 @@ public class GeoShapeTypeTest extends ESTestCase {
                 json
             ).mapOrdered();
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            throw new UncheckedIOException(e);
         }
     }
 
-    private static final List<Map<String, Object>> GEO_JSON = List.of(
+    private final List<Map<String, Object>> geoJson = List.of(
         parse("{ \"type\": \"Point\", \"coordinates\": [100.0, 0.0] }"),
         parse("{ \"type\": \"LineString\",\n" +
               "    \"coordinates\": [ [100.0, 0.0], [101.0, 1.0] ]\n" +
@@ -113,88 +118,249 @@ public class GeoShapeTypeTest extends ESTestCase {
               "  }")
     );
 
-    private GeoShapeType type = GeoShapeType.INSTANCE;
-
-    @Test
-    public void testStreamer() throws Exception {
-        for (Map<String, Object> geoJSON : GEO_JSON) {
-            Map<String, Object> value = type.implicitCast(geoJSON);
-
-            BytesStreamOutput out = new BytesStreamOutput();
-            type.streamer().writeValueTo(out, value);
-            StreamInput in = out.bytes().streamInput();
-            Map<String, Object> streamedValue = type.readValueFrom(in);
-
-            assertThat(streamedValue.size(), is(value.size()));
-            assertThat(streamedValue.get("type"), is(value.get("type")));
-            assertThat(streamedValue.get("coordinates"), is(value.get("coordinates")));
-        }
-    }
-
-    @Test
-    public void testCompareValueTo() throws Exception {
-        Map<String, Object> val1 = type.implicitCast("POLYGON ( (0 0, 20 0, 20 20, 0 20, 0 0 ))");
-        Map<String, Object> val2 = type.implicitCast("POINT (10 10)");
-
-        assertThat(type.compare(val1, val2), is(1));
-        assertThat(type.compare(val2, val1), is(-1));
-        assertThat(type.compare(val2, val2), is(0));
-    }
 
     @Test
     public void testInvalidStringValueCausesIllegalArgumentException() throws Exception {
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage("Cannot convert WKT \"foobar\" to shape");
-        type.implicitCast("foobar");
+        assertThatThrownBy(() -> type.implicitCast("foobar"))
+            .isExactlyInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Cannot convert WKT \"foobar\" to shape");
     }
 
     @Test
     public void testInvalidTypeCausesIllegalArgumentException() throws Exception {
-        expectedException.expect(ClassCastException.class);
-        expectedException.expectMessage("Can't cast '200' to geo_shape");
-        type.implicitCast(200);
+        assertThatThrownBy(() -> type.implicitCast(200))
+            .isExactlyInstanceOf(ClassCastException.class)
+            .hasMessage("Can't cast '200' to geo_shape");
     }
 
     @Test
     public void testInvalidCoordinates() throws Exception {
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage("Invalid GeoJSON: invalid coordinate");
-        type.implicitCast(Map.of(
-            GeoJSONUtils.TYPE_FIELD, GeoJSONUtils.LINE_STRING,
-            GeoJSONUtils.COORDINATES_FIELD, new double[][]{
-                new double[]{170.0d, 99.0d},
-                new double[]{180.5d, -180.5d}
-            }
-        ));
+        assertThatThrownBy(() -> type.implicitCast(Map.of(
+                GeoJSONUtils.TYPE_FIELD, GeoJSONUtils.LINE_STRING,
+                GeoJSONUtils.COORDINATES_FIELD, new double[][]{
+                    new double[]{170.0d, 99.0d},
+                    new double[]{180.5d, -180.5d}
+                }
+            )))
+            .isExactlyInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Invalid GeoJSON: invalid coordinate");
     }
 
     @Test
     public void testConvertFromValidWKT() throws Exception {
-        for (String wkt : WKT) {
+        for (String wkt : wkt) {
             Map<String, Object> geoShape = type.implicitCast(wkt);
-            assertThat(geoShape, is(notNullValue()));
+            assertThat(geoShape).isNotNull();
         }
     }
 
     @Test
     public void testConvertFromValidGeoJSON() throws Exception {
-        for (Map<String, Object> geoJSON : GEO_JSON) {
+        for (Map<String, Object> geoJSON : geoJson) {
             Map<String, Object> geoShape = type.implicitCast(geoJSON);
-            assertThat(geoShape, is(notNullValue()));
+            assertThat(geoShape).isNotNull();
         }
     }
 
     @Test
     public void test_cast_with_null_value() {
-        assertThat(type.implicitCast(null), is(nullValue()));
+        assertThat(type.implicitCast(null)).isNull();
     }
 
     @Test
     public void test_sanitize_value_geo_shape_objects() {
         for (Shape shape : GeoJSONUtilsTest.SHAPES) {
             Map<String, Object> map = type.sanitizeValue(shape);
-            GeoJSONUtils.validateGeoJson(map);
+            GeoJSONUtils.sanitizeMap(map);
         }
+    }
+
+    @Override
+    public void test_reference_resolver_docvalues_off() throws Exception {
+        assumeFalse("GeoShapeType cannot disable column store", true);
+    }
+
+    @Override
+    public void test_reference_resolver_index_and_docvalues_off() throws Exception {
+        assumeFalse("GeoShapeType cannot disable column store", true);
+    }
+
+    @Override
+    public void test_reference_resolver_index_off() throws Exception {
+        assumeFalse("GeoShapeType cannot disable index", true);
+    }
+
+    @Test
+    public void test_bytes_estimate() throws Exception {
+        assertThat(type.valueBytes(geoJson.get(0))).isEqualTo(848);
+        assertThat(type.valueBytes(geoJson.get(1))).isEqualTo(1416);
+        assertThat(type.valueBytes(geoJson.get(2))).isEqualTo(3040);
+        assertThat(type.valueBytes(geoJson.get(3))).isEqualTo(5744);
+        assertThat(type.valueBytes(geoJson.get(4))).isEqualTo(1416);
+        assertThat(type.valueBytes(geoJson.get(5))).isEqualTo(2544);
+        assertThat(type.valueBytes(geoJson.get(6))).isEqualTo(8504);
+        assertThat(type.valueBytes(geoJson.get(7))).isEqualTo(2624);
+
+        UnaryOperator<Map<String, Object>> normalize = geoJson -> {
+            return type.implicitCast(GeoJSONUtils.map2Shape(geoJson));
+        };
+        assertThat(type.valueBytes(normalize.apply(geoJson.get(0)))).isEqualTo(264);
+        assertThat(type.valueBytes(normalize.apply(geoJson.get(1)))).isEqualTo(320);
+        assertThat(type.valueBytes(normalize.apply(geoJson.get(2)))).isEqualTo(424);
+        assertThat(type.valueBytes(normalize.apply(geoJson.get(3)))).isEqualTo(600);
+        assertThat(type.valueBytes(normalize.apply(geoJson.get(4)))).isEqualTo(824);
+        assertThat(type.valueBytes(normalize.apply(geoJson.get(5)))).isEqualTo(424);
+        assertThat(type.valueBytes(normalize.apply(geoJson.get(6)))).isEqualTo(1320);
+        assertThat(type.valueBytes(normalize.apply(geoJson.get(7)))).isEqualTo(880);
+    }
+
+    @Test
+    public void test_check_equality_with_itself() throws Exception {
+        for (Map<String, Object> json: geoJson) {
+            assertThat(type.compare(json, json)).isEqualTo(0);
+        }
+    }
+
+    @Test
+    public void test_check_topological_equality() throws Exception {
+        // Both shapes have the same point set.
+        // They are not equal exactly but they equal topologically.
+        Map<String, Object> shape1 = type.implicitCast("polygon (( 0 0, 1 0, 1 1, 0 1, 0 0))");
+        Map<String, Object> shape2 = type.implicitCast("polygon (( 1 0, 1 1, 0 1, 0 0, 1 0))");
+        assertThat(type.compare(shape1, shape2)).isEqualTo(0);
+        assertThat(type.compare(shape2, shape1)).isEqualTo(0);
+    }
+
+    @Test
+    public void test_geometry_collections_with_same_shapes_in_different_order_are_not_equal() throws Exception {
+        Map<String, Object> collection1 = parse(
+            """
+            {
+                "type": "GeometryCollection",
+                "geometries": [
+                    {
+                        "type": "Point",
+                        "coordinates": [100.0, 0.0]
+                    },
+                    {
+                        "type": "LineString",
+                        "coordinates": [[101.0, 0.0], [102.0, 1.0]]
+                    }
+                ]
+            }
+            """
+        );
+        Map<String, Object> collection2 = parse(
+            """
+            {
+                "type": "GeometryCollection",
+                "geometries": [
+                    {
+                        "type": "LineString",
+                        "coordinates": [[101.0, 0.0], [102.0, 1.0]]
+                    },
+                    {
+                        "type": "Point",
+                        "coordinates": [100.0, 0.0]
+                    }
+                ]
+            }
+            """
+        );
+        assertThat(type.compare(collection1, collection2)).isEqualTo(1);
+        assertThat(type.compare(collection2, collection1)).isEqualTo(1);
+    }
+
+    @Test
+    public void test_check_equality_of_collections_of_different_sizes() throws Exception {
+        Map<String, Object> collection1 = parse(
+            """
+            {
+                "type": "GeometryCollection",
+                "geometries": [
+                    {
+                        "type": "Point",
+                        "coordinates": [100.0, 0.0]
+                    },
+                    {
+                        "type": "LineString",
+                        "coordinates": [[101.0, 0.0], [102.0, 1.0]]
+                    }
+                ]
+            }
+            """
+        );
+        Map<String, Object> collection2 = parse(
+            """
+            {
+                "type": "GeometryCollection",
+                "geometries": [
+                    {
+                        "type": "Point",
+                        "coordinates": [100.0, 0.0]
+                    },
+                    {
+                        "type": "LineString",
+                        "coordinates": [[101.0, 0.0], [102.0, 1.0]]
+                    },
+                    {
+                        "type": "LineString",
+                        "coordinates": [[101.0, 0.0], [102.0, 1.0]]
+                    }
+                ]
+            }
+            """
+        );
+        assertThat(type.compare(collection1, collection2)).isEqualTo(1);
+        assertThat(type.compare(collection2, collection1)).isEqualTo(1);
+    }
+
+    @Test
+    public void test_check_equality_of_shapes_of_same_type_with_different_coordinates_sizes() throws Exception {
+        Map<String, Object> shape1 = parse("""
+            {
+                "type": "LineString",
+                "coordinates": [[101.0, 0.0], [102.0, 1.0]]
+            }
+            """);
+        Map<String, Object> shape2 = parse("""
+            {
+                "type": "LineString",
+                "coordinates": [[101.0, 0.0], [102.0, 1.0], [103.0, 1.0]]
+            }
+            """);
+        assertThat(type.compare(shape1, shape2)).isEqualTo(1);
+        assertThat(type.compare(shape2, shape1)).isEqualTo(1);
+    }
+
+    @Test
+    public void test_geometry_collection_equal_to_corresponding_multi_part() throws Exception {
+        Map<String, Object> collection = parse(
+            """
+            {
+                "type": "GeometryCollection",
+                "geometries": [
+                    {
+                        "type": "Point",
+                        "coordinates": [1.0, 1.0]
+                    },
+                    {
+                        "type": "Point",
+                        "coordinates": [2.0, 2.0]
+                    }
+                ]
+            }
+            """
+        );
+        Map<String, Object> multiPoint = parse("""
+            {
+                "type": "MultiPoint",
+                "coordinates": [[1.0, 1.0], [2.0, 2.0]]
+            }
+            """
+        );
+        assertThat(type.implicitCast(collection)).isEqualTo(type.implicitCast(multiPoint));
+        assertThat(type.sanitizeValue(collection)).isEqualTo(type.sanitizeValue(multiPoint));
     }
 }
 

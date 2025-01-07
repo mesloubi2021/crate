@@ -22,15 +22,16 @@
 package io.crate.auth;
 
 import static io.crate.protocols.postgres.PGErrorStatus.INVALID_AUTHORIZATION_SPECIFICATION;
-import static org.hamcrest.Matchers.containsString;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.fail;
+import static io.crate.testing.Asserts.assertSQLError;
+import static io.crate.testing.Asserts.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -44,7 +45,6 @@ import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
 import io.crate.protocols.ssl.SslSettings;
-import io.crate.testing.Asserts;
 import io.crate.testing.UseJdbc;
 
 /**
@@ -100,6 +100,7 @@ public class AuthenticationWithSSLIntegrationTest extends IntegTestCase {
             .build();
     }
 
+    @SuppressWarnings("EmptyTryBlock")
     @Test
     public void checkSslConfigOption() throws SQLException {
         Properties properties = new Properties();
@@ -123,7 +124,7 @@ public class AuthenticationWithSSLIntegrationTest extends IntegTestCase {
             }
             fail("User was able to use SSL although HBA config had requireSSL=never set.");
         } catch (PSQLException e) {
-            assertThat(e.getMessage(), containsString("FATAL: No valid auth.host_based entry found"));
+            assertThat(e.getMessage()).contains("FATAL: No valid auth.host_based entry found");
         }
 
         properties.setProperty("user", "requiredssluser");
@@ -131,22 +132,25 @@ public class AuthenticationWithSSLIntegrationTest extends IntegTestCase {
         }
     }
 
+    @SuppressWarnings("EmptyTryBlock")
     @Test
     public void testClientCertAuthWithoutCert() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("user", "localhost");
         properties.setProperty("ssl", "true");
 
-        Asserts.assertSQLError(
+        assertSQLError(
             () -> {
                 try (Connection ignored = DriverManager.getConnection(sqlExecutor.jdbcUrl(), properties)) {
                 }
             })
             .isExactlyInstanceOf(PSQLException.class)
             .hasPGError(INVALID_AUTHORIZATION_SPECIFICATION)
-            .hasMessageContaining("Client certificate authentication failed for user \"localhost\"");
+            // <=5.7.1 used to fail with different message "authentication failed".
+            // After 5.7.2 we take connection properties into account (client cert, password or token headers) for matching an auth method.
+            // Thus, a connection without client cert doesn't even qualify as matching anymore
+            .hasMessageContaining("No valid auth.host_based entry found for host \"127.0.0.1\", user \"localhost\". Did you enable TLS in your client?");
     }
-
 
     @After
     public void dropUsers() throws SQLException {
@@ -166,6 +170,6 @@ public class AuthenticationWithSSLIntegrationTest extends IntegTestCase {
         if (fileUrl == null) {
             throw new FileNotFoundException("Resource was not found: " + fileNameFromClasspath);
         }
-        return new File(URLDecoder.decode(fileUrl.getFile(), "UTF-8"));
+        return new File(URLDecoder.decode(fileUrl.getFile(), StandardCharsets.UTF_8));
     }
 }

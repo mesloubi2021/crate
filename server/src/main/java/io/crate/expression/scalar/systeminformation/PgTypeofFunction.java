@@ -24,8 +24,9 @@ package io.crate.expression.scalar.systeminformation;
 import static io.crate.metadata.functions.TypeVariableConstraint.typeVariable;
 
 import io.crate.data.Input;
-import io.crate.expression.scalar.ScalarFunctionModule;
 import io.crate.metadata.FunctionName;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -39,14 +40,14 @@ public final class PgTypeofFunction extends Scalar<String, Object> {
 
     private static final FunctionName FQNAME = new FunctionName(PgCatalogSchemaInfo.NAME, "pg_typeof");
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                FQNAME,
-                TypeSignature.parse("E"),
-                DataTypes.STRING.getTypeSignature()
-            )
-                .withTypeVariableConstraints(typeVariable("E")),
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder(FQNAME, FunctionType.SCALAR)
+                .argumentTypes(TypeSignature.parse("E"))
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+                .typeVariableConstraints(typeVariable("E"))
+                .build(),
             PgTypeofFunction::new
         );
 

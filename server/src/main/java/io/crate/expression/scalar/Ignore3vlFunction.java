@@ -29,6 +29,8 @@ import io.crate.data.Input;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.Symbol;
 import io.crate.lucene.LuceneQueryBuilder.Context;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -50,14 +52,14 @@ import io.crate.types.DataTypes;
 public class Ignore3vlFunction extends Scalar<Boolean, Boolean> {
 
     public static final String NAME = "ignore3vl";
-    public static final Signature SIGNATURE = Signature.scalar(
-        NAME,
-        DataTypes.BOOLEAN.getTypeSignature(),
-        DataTypes.BOOLEAN.getTypeSignature()
-    );
+    public static final Signature SIGNATURE = Signature.builder(NAME, FunctionType.SCALAR)
+        .argumentTypes(DataTypes.BOOLEAN.getTypeSignature())
+        .returnType(DataTypes.BOOLEAN.getTypeSignature())
+        .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+        .build();
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
+    public static void register(Functions.Builder module) {
+        module.add(
             SIGNATURE,
             Ignore3vlFunction::new
         );

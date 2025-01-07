@@ -62,7 +62,7 @@ import com.microsoft.azure.storage.blob.CloudBlockBlob;
 import com.microsoft.azure.storage.blob.DeleteSnapshotsOption;
 import com.microsoft.azure.storage.blob.ListBlobItem;
 
-import io.crate.common.annotations.VisibleForTesting;
+import org.jetbrains.annotations.VisibleForTesting;
 
 public class AzureStorageService {
 
@@ -121,7 +121,7 @@ public class AzureStorageService {
     }
 
     protected CloudBlobClient createClient(AzureStorageSettings azureStorageSettings) throws InvalidKeyException, URISyntaxException {
-        final String connectionString = azureStorageSettings.buildConnectionString();
+        final String connectionString = azureStorageSettings.getConnectString();
         return CloudStorageAccount.parse(connectionString).createCloudBlobClient();
     }
 

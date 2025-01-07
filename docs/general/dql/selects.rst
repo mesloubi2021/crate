@@ -296,6 +296,25 @@ These operators can be used to query for rows where only part of a columns
 value should match something. The only difference is that, in the case of
 ``ILIKE``, the matching is case insensitive.
 
+Both ``LIKE`` and ``ILIKE`` support optional ``ESCAPE`` character. When no
+value is provided, backslash character ``\`` is used as the escape character.
+Providing an empty value disables escaping.
+
+.. NOTE::
+
+    The pattern for ``LIKE`` and ``ILIKE`` operators cannot end with the
+    ``ESCAPE`` character.
+
+Example of query with custom ESCAPE::
+
+    cr> SELECT 'test' LIKE 'te%' escape 'e' as res;
+    +-------+
+    | res   |
+    +-------+
+    | FALSE |
+    +-------+
+    SELECT 1 row in set (... sec)
+
 For example to get all locations where the name starts with ``Ar`` the
 following queries can be used::
 
@@ -435,7 +454,7 @@ does always return ``NULL`` when comparing ``NULL``.
    don't have indices. They only exist for their child columns.
 
    You can either query on inner columns or try the :ref:`null_or_empty
-   <scalar-null-or-empty>` scalar for improved performance.
+   <scalar-null-or-empty-object>` scalar for improved performance.
 
 
 .. _sql_dql_is_not_null:
@@ -460,13 +479,14 @@ does always return ``NULL`` when comparing ``NULL``.
 
 ::
 
-    cr> select name from locations where inhabitants['interests'] is not null;
+    cr> select name from locations where inhabitants['interests'] is not null
+    ... order by name;
     +-------------------+
     | name              |
     +-------------------+
+    | Argabuthon        |
     | Arkintoofle Minor |
     | Bartledan         |
-    | Argabuthon        |
     +-------------------+
     SELECT 3 rows in set (... sec)
 
@@ -486,7 +506,45 @@ does always return ``NULL`` when comparing ``NULL``.
    themselves don't have indices. They only exist for their child columns.
 
    You can either query on inner columns or try the :ref:`null_or_empty
-   <scalar-null-or-empty>` scalar for improved performance.
+   <scalar-null-or-empty-object>` scalar for improved performance.
+
+
+.. _sql_dql_is_distinct_from:
+
+``IS DISTINCT FROM``
+--------------------
+
+Returns ``TRUE`` if ``expr`` is not equal to :ref:`evaluate <gloss-evaluation>`.
+If both expressions are ``NULL`` the result is false. Comparing a non-NULL value
+to ``NULL`` returns ``TRUE`` - ``NULL`` is considered distinct from any value.
+
+Use this predicate to check for non-``NULL`` values as SQL's three-valued logic
+does always return ``NULL`` when comparing ``NULL``.
+
+.. vale off
+
+:expr:
+  :ref:`Expression <gloss-expression>` of one of the supported
+  :ref:`data types <data-types>` supported by CrateDB.
+
+.. vale on
+
+::
+
+    cr> SELECT
+    ...   name,
+    ...   name IS DISTINCT FROM 'Trillian' as is_distinct,
+    ...   name != 'Trillian' as not_eq
+    ... FROM unnest(['Arthur', 'Trillian', null]) as t(name)
+    ... ORDER BY 1;
+    +----------+-------------+--------+
+    | name     | is_distinct | not_eq |
+    +----------+-------------+--------+
+    | Arthur   | TRUE        | TRUE   |
+    | Trillian | FALSE       | FALSE  |
+    | NULL     | TRUE        | NULL   |
+    +----------+-------------+--------+
+    SELECT 3 rows in set (... sec)
 
 
 .. _sql_dql_array_comparisons:
@@ -644,20 +702,19 @@ The following query negates ``ANY`` using ``!=`` to return all rows where
 element that is not ``netball``::
 
     cr> select inhabitants['name'], inhabitants['interests'] from locations
-    ... where 'netball' != ANY(inhabitants['interests']);
+    ... where 'netball' != ANY(inhabitants['interests']) order by 1;
     +---------------------+------------------------------+
     | inhabitants['name'] | inhabitants['interests']     |
     +---------------------+------------------------------+
-    | Minories            | ["netball", "short stories"] |
     | Argabuthonians      | ["science", "reason"]        |
+    | Minories            | ["netball", "short stories"] |
     +---------------------+------------------------------+
     SELECT 2 rows in set (... sec)
 
 .. NOTE::
 
-    When using the ``!= ANY(<array_col>))`` syntax, the default maximum size of
-    the array can be 8192. To use larger arrays, you must configure the
-    :ref:`indices.query.bool.max_clause_count
+    When ``!= ANY(<array_col>))`` causes ``TooManyClauses`` errors you could
+    consider increasing :ref:`indices.query.bool.max_clause_count
     <indices.query.bool.max_clause_count>` setting as appropriate on each node.
 
 Negating the same query with a preceding ``not`` returns all rows where
@@ -674,9 +731,9 @@ Negating the same query with a preceding ``not`` returns all rows where
 
 This behaviour applies to:
 
- - ``LIKE`` and ``NOT LIKE``
+- ``LIKE`` and ``NOT LIKE``
 
- - All other comparison operators (excluding ``IS NULL`` and ``IS NOT NULL``)
+- All other comparison operators (excluding ``IS NULL`` and ``IS NOT NULL``)
 
 .. NOTE::
 
@@ -685,9 +742,9 @@ This behaviour applies to:
     logic`_. For better performance, consider using the :ref:`ignore3vl
     <scalar-ignore3vl>` function.
 
-    Additionally, When using ``NOT`` with ``LIKE ANY`` or ``NOT LIKE ANY``, the
-    default maximum size of the array can be 8192. To use larger arrays, you
-    must configure the :ref:`indices.query.bool.max_clause_count
+    Additionally, When ``NOT`` with ``LIKE ANY`` or ``NOT LIKE ANY`` on
+    arrays causes ``TooManyClauses`` errors, you could consider increasing
+    :ref:`indices.query.bool.max_clause_count
     <indices.query.bool.max_clause_count>` setting as appropriate on each node.
 
 .. _sql_dql_exists:
@@ -1293,4 +1350,4 @@ In this example, the inner :ref:`WITH <sql_with>` clause uses the outer CTE `a`:
 .. _`3-valued logic`: https://en.wikipedia.org/wiki/Null_(SQL)#Comparisons_with_NULL_and_the_three-valued_logic_(3VL)
 .. _Lucene Regular Expressions: http://lucene.apache.org/core/4_9_0/core/org/apache/lucene/util/automaton/RegExp.html
 .. _PCRE: https://en.wikipedia.org/wiki/Perl_Compatible_Regular_Expressions
-.. _POSIX Extended Regular Expressions: http://en.wikipedia.org/wiki/Regular_expression#POSIX_extended
+.. _POSIX Extended Regular Expressions: https://en.wikipedia.org/wiki/Regular_expression#POSIX_basic_and_extended

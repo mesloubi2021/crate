@@ -25,18 +25,18 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-
-import org.jetbrains.annotations.Nullable;
+import java.util.function.UnaryOperator;
 
 import org.elasticsearch.common.settings.Settings;
+import org.jetbrains.annotations.Nullable;
 
-import io.crate.common.collections.Lists2;
+import io.crate.common.collections.Lists;
 import io.crate.execution.dsl.projection.AggregationProjection;
 import io.crate.execution.dsl.projection.EvalProjection;
 import io.crate.execution.dsl.projection.FilterProjection;
 import io.crate.execution.dsl.projection.GroupProjection;
-import io.crate.execution.dsl.projection.Projection;
 import io.crate.execution.dsl.projection.LimitAndOffsetProjection;
+import io.crate.execution.dsl.projection.Projection;
 import io.crate.execution.dsl.projection.WriterProjection;
 import io.crate.execution.engine.aggregation.AggregationFunction;
 import io.crate.execution.engine.pipeline.LimitAndOffset;
@@ -50,7 +50,6 @@ import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.FunctionType;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.RowGranularity;
-import io.crate.metadata.SearchPath;
 import io.crate.types.DataType;
 
 public class ProjectionBuilder {
@@ -63,16 +62,14 @@ public class ProjectionBuilder {
 
     public AggregationProjection aggregationProjection(Collection<? extends Symbol> inputs,
                                                        Collection<Function> aggregates,
-                                                       java.util.function.Function<Symbol, Symbol> subQueryAndParamBinder,
+                                                       UnaryOperator<Symbol> subQueryAndParamBinder,
                                                        AggregateMode mode,
-                                                       RowGranularity granularity,
-                                                       SearchPath searchPath) {
+                                                       RowGranularity granularity) {
         InputColumns.SourceSymbols sourceSymbols = new InputColumns.SourceSymbols(inputs);
         ArrayList<Aggregation> aggregations = getAggregations(
             aggregates,
             mode,
             sourceSymbols,
-            searchPath,
             subQueryAndParamBinder
         );
         return new AggregationProjection(aggregations, granularity, mode);
@@ -82,21 +79,19 @@ public class ProjectionBuilder {
         Collection<? extends Symbol> inputs,
         Collection<? extends Symbol> keys,
         Collection<Function> values,
-        java.util.function.Function<Symbol, Symbol> subQueryAndParamBinder,
+        UnaryOperator<Symbol> subQueryAndParamBinder,
         AggregateMode mode,
-        RowGranularity requiredGranularity,
-        SearchPath searchPath) {
+        RowGranularity requiredGranularity) {
 
         InputColumns.SourceSymbols sourceSymbols = new InputColumns.SourceSymbols(inputs);
         ArrayList<Aggregation> aggregations = getAggregations(
             values,
             mode,
             sourceSymbols,
-            searchPath,
             subQueryAndParamBinder
         );
         return new GroupProjection(
-            Lists2.map(InputColumns.create(keys, sourceSymbols), subQueryAndParamBinder),
+            Lists.map(InputColumns.create(keys, sourceSymbols), subQueryAndParamBinder),
             aggregations,
             mode,
             requiredGranularity
@@ -106,11 +101,10 @@ public class ProjectionBuilder {
     private ArrayList<Aggregation> getAggregations(Collection<Function> functions,
                                                    AggregateMode mode,
                                                    InputColumns.SourceSymbols sourceSymbols,
-                                                   SearchPath searchPath,
-                                                   java.util.function.Function<Symbol, Symbol> subQueryAndParamBinder) {
+                                                   UnaryOperator<Symbol> subQueryAndParamBinder) {
         ArrayList<Aggregation> aggregations = new ArrayList<>(functions.size());
         for (Function function : functions) {
-            assert function.signature().getKind() == FunctionType.AGGREGATE :
+            assert function.signature().getType() == FunctionType.AGGREGATE :
                     "function type must be " + FunctionType.AGGREGATE;
             AggregationFunction<?, ?> aggregationFunction = (AggregationFunction<?, ?>) nodeCtx.functions().getQualified(
                 function
@@ -120,8 +114,7 @@ public class ProjectionBuilder {
             List<Symbol> aggregationInputs;
             Symbol filterInput;
             switch (mode) {
-                case ITER_FINAL:
-                case ITER_PARTIAL:
+                case ITER_PARTIAL, ITER_FINAL:
                     // ITER means that there is no aggregation part upfront, therefore the input
                     // symbols need to be in arguments
                     aggregationInputs = InputColumns.create(function.arguments(), sourceSymbols);
@@ -148,7 +141,7 @@ public class ProjectionBuilder {
                 aggregationFunction.signature(),
                 aggregationFunction.boundSignature().returnType(),
                 valueType,
-                Lists2.map(aggregationInputs, subQueryAndParamBinder),
+                Lists.map(aggregationInputs, subQueryAndParamBinder),
                 subQueryAndParamBinder.apply(filterInput)
             );
             aggregations.add(aggregation);

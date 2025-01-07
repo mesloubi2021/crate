@@ -21,20 +21,21 @@
 
 package io.crate.statistics;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
-import org.hamcrest.Matchers;
-import org.hamcrest.core.IsNull;
-import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.Answers;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 
-import io.crate.action.sql.Session;
-import io.crate.action.sql.Sessions;
+import io.crate.session.Session;
+import io.crate.session.Sessions;
 import io.crate.common.unit.TimeValue;
+import io.crate.protocols.postgres.ConnectionProperties;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 
 public class TableStatsServiceTest extends CrateDummyClusterServiceUnitTest {
@@ -48,9 +49,8 @@ public class TableStatsServiceTest extends CrateDummyClusterServiceUnitTest {
             clusterService,
             Mockito.mock(Sessions.class, Answers.RETURNS_MOCKS));
 
-        Assert.assertThat(statsService.refreshInterval,
-                          Matchers.is(TimeValue.timeValueMinutes(0)));
-        Assert.assertThat(statsService.scheduledRefresh, Matchers.is(Matchers.nullValue()));
+        assertThat(statsService.refreshInterval).isEqualTo(TimeValue.timeValueMinutes(0));
+        assertThat(statsService.scheduledRefresh).isNull();
 
         // Default setting
         statsService = new TableStatsService(
@@ -59,9 +59,9 @@ public class TableStatsServiceTest extends CrateDummyClusterServiceUnitTest {
             clusterService,
             Mockito.mock(Sessions.class, Answers.RETURNS_MOCKS));
 
-        Assert.assertThat(statsService.refreshInterval,
-                          Matchers.is(TableStatsService.STATS_SERVICE_REFRESH_INTERVAL_SETTING.getDefault(Settings.EMPTY)));
-        Assert.assertThat(statsService.scheduledRefresh, Matchers.is(IsNull.notNullValue()));
+        assertThat(statsService.refreshInterval)
+            .isEqualTo(TableStatsService.STATS_SERVICE_REFRESH_INTERVAL_SETTING.getDefault(Settings.EMPTY));
+        assertThat(statsService.scheduledRefresh).isNotNull();
 
         ClusterSettings clusterSettings = clusterService.getClusterSettings();
 
@@ -69,24 +69,22 @@ public class TableStatsServiceTest extends CrateDummyClusterServiceUnitTest {
         clusterSettings.applySettings(Settings.builder()
             .put(TableStatsService.STATS_SERVICE_REFRESH_INTERVAL_SETTING.getKey(), "10m").build());
 
-        Assert.assertThat(statsService.refreshInterval, Matchers.is(TimeValue.timeValueMinutes(10)));
-        Assert.assertThat(statsService.scheduledRefresh,
-                          Matchers.is(IsNull.notNullValue()));
+        assertThat(statsService.refreshInterval).isEqualTo(TimeValue.timeValueMinutes(10));
+        assertThat(statsService.scheduledRefresh).isNotNull();
 
         // Disable
         clusterSettings.applySettings(Settings.builder()
             .put(TableStatsService.STATS_SERVICE_REFRESH_INTERVAL_SETTING.getKey(), 0).build());
 
-        Assert.assertThat(statsService.refreshInterval, Matchers.is(TimeValue.timeValueMillis(0)));
-        Assert.assertThat(statsService.scheduledRefresh,
-                          Matchers.is(Matchers.nullValue()));
+        assertThat(statsService.refreshInterval).isEqualTo(TimeValue.timeValueMillis(0));
+        assertThat(statsService.scheduledRefresh).isNull();
 
         // Reset setting
         clusterSettings.applySettings(Settings.builder().build());
 
-        Assert.assertThat(statsService.refreshInterval,
-                          Matchers.is(TableStatsService.STATS_SERVICE_REFRESH_INTERVAL_SETTING.getDefault(Settings.EMPTY)));
-        Assert.assertThat(statsService.scheduledRefresh, Matchers.is(IsNull.notNullValue()));
+        assertThat(statsService.refreshInterval)
+            .isEqualTo(TableStatsService.STATS_SERVICE_REFRESH_INTERVAL_SETTING.getDefault(Settings.EMPTY));
+        assertThat(statsService.scheduledRefresh).isNotNull();
     }
 
     @Test
@@ -113,7 +111,10 @@ public class TableStatsServiceTest extends CrateDummyClusterServiceUnitTest {
         Mockito.when(clusterService.getClusterSettings()).thenReturn(this.clusterService.getClusterSettings());
         Sessions sqlOperations = Mockito.mock(Sessions.class);
         Session session = Mockito.mock(Session.class);
-        Mockito.when(sqlOperations.newSession(ArgumentMatchers.anyString(), ArgumentMatchers.any())).thenReturn(session);
+        Mockito.when(sqlOperations.newSession(
+            any(ConnectionProperties.class),
+            ArgumentMatchers.anyString(), any())
+        ).thenReturn(session);
 
         TableStatsService statsService = new TableStatsService(
             Settings.EMPTY,

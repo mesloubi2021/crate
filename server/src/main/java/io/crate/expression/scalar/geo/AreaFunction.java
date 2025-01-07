@@ -21,17 +21,20 @@
 
 package io.crate.expression.scalar.geo;
 
-import io.crate.expression.scalar.ScalarFunctionModule;
-import io.crate.expression.scalar.UnaryScalar;
-import io.crate.geo.GeoJSONUtils;
-import io.crate.types.DataTypes;
-import io.crate.types.GeoShapeType;
+import java.util.Map;
+
 import org.locationtech.spatial4j.context.jts.JtsSpatialContext;
 import org.locationtech.spatial4j.shape.Shape;
 
-import java.util.Map;
-
-import static io.crate.metadata.functions.Signature.scalar;
+import io.crate.expression.scalar.ScalarFunctions;
+import io.crate.expression.scalar.UnaryScalar;
+import io.crate.geo.GeoJSONUtils;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
+import io.crate.metadata.Scalar;
+import io.crate.metadata.functions.Signature;
+import io.crate.types.DataTypes;
+import io.crate.types.GeoShapeType;
 
 /**
  * This class implements the area(geoShape) function on columns of GEO_SHAPE type.
@@ -47,19 +50,19 @@ public final class AreaFunction {
     public static final String FUNCTION_NAME = "area";
 
     /**
-     * Registers the area function in the {@link ScalarFunctionModule}.
+     * Registers the area function in the {@link ScalarFunctions}.
      * It takes as input a GEO_SHAPE and produces a double value
      * designated as the area of the shape.
      *
-     * @param module the {@link ScalarFunctionModule}
+     * @param module the {@link ScalarFunctions}
      */
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            scalar(
-                FUNCTION_NAME,
-                DataTypes.GEO_SHAPE.getTypeSignature(),
-                DataTypes.DOUBLE.getTypeSignature()
-            ),
+    public static void register(Functions.Builder builder) {
+        builder.add(
+            Signature.builder(FUNCTION_NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.GEO_SHAPE.getTypeSignature())
+                .returnType(DataTypes.DOUBLE.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new UnaryScalar<>(
                     signature,

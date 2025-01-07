@@ -43,6 +43,7 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 
 import io.crate.signatures.antlr.TypeSignaturesLexer;
+import io.crate.sql.tree.ColumnPolicy;
 
 public class TypeSignature implements Writeable, Accountable {
 
@@ -156,6 +157,10 @@ public class TypeSignature implements Writeable, Accountable {
         return parameters;
     }
 
+    public boolean hasNumericParameters() {
+        return parameters.stream().anyMatch(t -> t instanceof IntegerLiteralTypeSignature);
+    }
+
     /**
      * Create the concrete {@link DataType} for this type signature.
      * Only `array` and `object` parameterized type signatures are supported.
@@ -168,7 +173,7 @@ public class TypeSignature implements Writeable, Accountable {
             DataType<?> innerType = parameters.get(0).createType();
             return new ArrayType<>(innerType);
         } else if (baseTypeName.equalsIgnoreCase(ObjectType.NAME)) {
-            var builder = ObjectType.builder();
+            var builder = ObjectType.of(ColumnPolicy.DYNAMIC);
             // Only build typed objects if we receive parameter key-value pairs which may not exist on generic
             // object signatures with type information only, no key strings
             if (parameters.size() > 1) {
@@ -201,7 +206,8 @@ public class TypeSignature implements Writeable, Accountable {
                 if (!parameter.type().equals(TypeSignatureType.INTEGER_LITERAL_SIGNATURE)) {
                     throw new IllegalArgumentException(
                         "The signature type of the based data type parameters can only be: "
-                        + TypeSignatureType.INTEGER_LITERAL_SIGNATURE.toString());
+                        + TypeSignatureType.INTEGER_LITERAL_SIGNATURE
+                        + " but was " + parameter.type());
                 }
                 integerLiteralParameters.add(((IntegerLiteralTypeSignature) parameter).value());
             }
@@ -231,6 +237,10 @@ public class TypeSignature implements Writeable, Accountable {
         }
         typeName.append(")");
         return typeName.toString();
+    }
+
+    public boolean equalsIgnoringParameters(TypeSignature o) {
+        return Objects.equals(baseTypeName, o.baseTypeName);
     }
 
     @Override

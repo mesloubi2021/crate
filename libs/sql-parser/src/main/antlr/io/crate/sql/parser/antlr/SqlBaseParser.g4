@@ -41,7 +41,7 @@ statement
     | START TRANSACTION (transactionMode (COMMA? transactionMode)*)?                 #startTransaction
     | COMMIT (WORK | TRANSACTION)?                                                   #commit
     | END (WORK | TRANSACTION)?                                                      #commit
-    | EXPLAIN (ANALYZE | explainOptions*) statement                                  #explain
+    | EXPLAIN (ANALYZE | VERBOSE | explainOptions*) statement                        #explain
     | OPTIMIZE TABLE tableWithPartitions withProperties?                             #optimize
     | REFRESH TABLE tableWithPartitions                                              #refreshTable
     | UPDATE aliasedRelation
@@ -82,11 +82,11 @@ statement
         TO DIRECTORY? path=expr withProperties?                                      #copyTo
     | dropStmt                                                                       #drop
     | GRANT (priviliges=idents | ALL PRIVILEGES?)
-        (ON clazz qnames)? TO users=idents                                           #grantPrivilege
+        (ON securable qnames)? TO users=idents                                       #grantPrivilege
     | DENY (priviliges=idents | ALL PRIVILEGES?)
-        (ON clazz qnames)? TO users=idents                                           #denyPrivilege
+        (ON securable qnames)? TO users=idents                                       #denyPrivilege
     | REVOKE (privileges=idents | ALL PRIVILEGES?)
-        (ON clazz qnames)? FROM users=idents                                         #revokePrivilege
+        (ON securable qnames)? FROM users=idents                                     #revokePrivilege
     | createStmt                                                                     #create
     | DEALLOCATE (PREPARE)? (ALL | prepStmt=stringLiteralOrIdentifierOrQname)        #deallocate
     | ANALYZE                                                                        #analyze
@@ -106,11 +106,14 @@ dropStmt
     | DROP FUNCTION (IF EXISTS)? name=qname
         OPEN_ROUND_BRACKET (functionArgument (COMMA functionArgument)*)?
         CLOSE_ROUND_BRACKET                                                          #dropFunction
-    | DROP USER (IF EXISTS)? name=ident                                              #dropUser
+    | DROP (USER | ROLE) (IF EXISTS)? name=ident                                     #dropRole
     | DROP VIEW (IF EXISTS)? names=qnames                                            #dropView
     | DROP ANALYZER name=ident                                                       #dropAnalyzer
     | DROP PUBLICATION (IF EXISTS)? name=ident                                       #dropPublication
     | DROP SUBSCRIPTION (IF EXISTS)? name=ident                                      #dropSubscription
+    | DROP SERVER (IF EXISTS)? names=idents (CASCADE | RESTRICT)?                    #dropServer
+    | DROP FOREIGN TABLE (IF EXISTS)? names=qnames (CASCADE | RESTRICT)?             #dropForeignTable
+    | DROP USER MAPPING (IF EXISTS)? FOR mappedUser SERVER server=ident              #dropUserMapping
     ;
 
 alterStmt
@@ -126,17 +129,21 @@ alterStmt
         (SET OPEN_ROUND_BRACKET genericProperties CLOSE_ROUND_BRACKET
         | RESET (OPEN_ROUND_BRACKET ident (COMMA ident)* CLOSE_ROUND_BRACKET)?)      #alterBlobTableProperties
     | ALTER (BLOB)? TABLE alterTableDefinition (OPEN | CLOSE)                        #alterTableOpenClose
-    | ALTER (BLOB)? TABLE alterTableDefinition RENAME TO qname                       #alterTableRename
+    | ALTER (BLOB)? TABLE alterTableDefinition RENAME TO qname                       #alterTableRenameTable
+    | ALTER (BLOB)? TABLE alterTableDefinition
+        RENAME COLUMN? source=subscriptSafe TO target=subscriptSafe                  #alterTableRenameColumn
     | ALTER (BLOB)? TABLE alterTableDefinition REROUTE rerouteOption                 #alterTableReroute
     | ALTER CLUSTER REROUTE RETRY FAILED                                             #alterClusterRerouteRetryFailed
     | ALTER CLUSTER SWAP TABLE source=qname TO target=qname withProperties?          #alterClusterSwapTable
     | ALTER CLUSTER DECOMMISSION node=expr                                           #alterClusterDecommissionNode
     | ALTER CLUSTER GC DANGLING ARTIFACTS                                            #alterClusterGCDanglingArtifacts
-    | ALTER USER name=ident
-        SET OPEN_ROUND_BRACKET genericProperties CLOSE_ROUND_BRACKET                 #alterUser
+    | ALTER (USER | ROLE) name=ident
+        SET OPEN_ROUND_BRACKET genericProperties CLOSE_ROUND_BRACKET                 #alterRoleSet
+    | ALTER (USER | ROLE) name=ident RESET (property=ident | ALL)                    #alterRoleReset
     | ALTER PUBLICATION name=ident
         ((ADD | SET | DROP) TABLE qname ASTERISK?  (COMMA qname ASTERISK? )*)        #alterPublication
     | ALTER SUBSCRIPTION name=ident alterSubscriptionMode                            #alterSubscription
+    | ALTER SERVER  name=ident alterServerOptions                                    #alterServer
     ;
 
 
@@ -184,7 +191,7 @@ querySpec
     : SELECT setQuant? selectItem (COMMA selectItem)*
       (FROM relation (COMMA relation)*)?
       where?
-      (GROUP BY expr (COMMA expr)*)?
+      (GROUP BY ( ALL | expr (COMMA expr)*))?
       (HAVING having=booleanExpression)?
       (WINDOW windows+=namedWindow (COMMA windows+=namedWindow)*)?                   #defaultQuerySpec
     | VALUES values (COMMA values)*                                                  #valuesRelation
@@ -285,7 +292,8 @@ predicate[ParserRuleContext value]
     | NOT? BETWEEN lower=valueExpression AND upper=valueExpression                   #between
     | NOT? IN OPEN_ROUND_BRACKET expr (COMMA expr)* CLOSE_ROUND_BRACKET              #inList
     | NOT? IN subqueryExpression                                                     #inSubquery
-    | NOT? (LIKE | ILIKE) pattern=valueExpression (ESCAPE escape=valueExpression)?   #like
+    | NOT? (LIKE | ILIKE) pattern=valueExpression
+        (ESCAPE escape=parameterOrLiteral)?                                          #like
     | NOT? (LIKE | ILIKE) quant=setCmpQuantifier
         OPEN_ROUND_BRACKET v=valueExpression CLOSE_ROUND_BRACKET
         (ESCAPE escape=valueExpression)?                                             #arrayLike
@@ -293,9 +301,12 @@ predicate[ParserRuleContext value]
     | IS NOT? DISTINCT FROM right=valueExpression                                    #distinctFrom
     ;
 
+// Operators are declared in the order of their precedence.
 valueExpression
     : primaryExpression                                                              #valueExpressionDefault
     | operator=(MINUS | PLUS) valueExpression                                        #arithmeticUnary
+    | left=valueExpression operator=CARET
+            right=valueExpression                                                    #arithmeticBinary
     | left=valueExpression operator=(ASTERISK | SLASH | PERCENT)
         right=valueExpression                                                        #arithmeticBinary
     | left=valueExpression operator=(PLUS | MINUS) right=valueExpression             #arithmeticBinary
@@ -336,11 +347,12 @@ explicitFunction
     | name=CURRENT_TIMESTAMP
         (OPEN_ROUND_BRACKET precision=integerLiteral CLOSE_ROUND_BRACKET)?           #specialDateTimeFunction
     | CURRENT_SCHEMA                                                                 #currentSchema
-    | (CURRENT_USER | USER)                                                          #currentUser
+    | (CURRENT_USER | CURRENT_ROLE | USER)                                           #currentUser
     | SESSION_USER                                                                   #sessionUser
     | LEFT OPEN_ROUND_BRACKET strOrColName=expr COMMA len=expr CLOSE_ROUND_BRACKET   #left
     | RIGHT OPEN_ROUND_BRACKET strOrColName=expr COMMA len=expr CLOSE_ROUND_BRACKET  #right
     | SUBSTRING OPEN_ROUND_BRACKET expr FROM expr (FOR expr)? CLOSE_ROUND_BRACKET    #substring
+    | POSITION OPEN_ROUND_BRACKET expr IN expr CLOSE_ROUND_BRACKET                   #position
     | TRIM OPEN_ROUND_BRACKET ((trimMode=(LEADING | TRAILING | BOTH))?
                 (charsToTrim=expr)? FROM)? target=expr CLOSE_ROUND_BRACKET           #trim
     | EXTRACT OPEN_ROUND_BRACKET stringLiteralOrIdentifier FROM
@@ -479,6 +491,14 @@ qname
     : ident (DOT ident)*
     ;
 
+spaceSeparatedIdents
+    : identWithOrWithoutValue (identWithOrWithoutValue)*
+    ;
+
+identWithOrWithoutValue
+    : ident (parameterOrSimpleLiteral)?
+    ;
+
 idents
     : ident (COMMA ident)*
     ;
@@ -520,7 +540,7 @@ intervalLiteral
     ;
 
 intervalField
-    : YEAR | MONTH | DAY | HOUR | MINUTE | SECOND
+    : YEAR | MONTH | DAY | HOUR | MINUTE | SECOND | MILLISECOND
     ;
 
 booleanLiteral
@@ -570,7 +590,10 @@ createStmt
     : CREATE TABLE (IF NOT EXISTS)? table
         OPEN_ROUND_BRACKET tableElement (COMMA tableElement)* CLOSE_ROUND_BRACKET
          partitionedByOrClusteredInto withProperties?                                #createTable
-    | CREATE TABLE table AS insertSource                                             #createTableAs
+    | CREATE TABLE (IF NOT EXISTS)? table AS insertSource                            #createTableAs
+    | CREATE FOREIGN TABLE (IF NOT EXISTS)? tableName=qname
+        OPEN_ROUND_BRACKET tableElement (COMMA tableElement)* CLOSE_ROUND_BRACKET
+        SERVER server=ident kvOptions?                                               #createForeignTable
     | CREATE BLOB TABLE table numShards=blobClusteredInto? withProperties?           #createBlobTable
     | CREATE REPOSITORY name=ident TYPE type=ident withProperties?                   #createRepository
     | CREATE SNAPSHOT qname (ALL | TABLE tableWithPartitions) withProperties?        #createSnapshot
@@ -583,14 +606,48 @@ createStmt
         RETURNS returnType=dataType
         LANGUAGE language=parameterOrIdent
         AS body=parameterOrString                                                    #createFunction
-    | CREATE USER name=ident withProperties?                                         #createUser
+    | CREATE USER MAPPING (IF NOT EXISTS)?
+          FOR mappedUser SERVER server=ident kvOptions?                              #createUserMapping
+    | CREATE (USER | ROLE) name=ident ((withProperties | WITH?
+        OPEN_ROUND_BRACKET? options=spaceSeparatedIdents CLOSE_ROUND_BRACKET?))?     #createRole
     | CREATE ( OR REPLACE )? VIEW name=qname AS queryOptParens                       #createView
     | CREATE PUBLICATION name=ident
         (FOR ALL TABLES | FOR TABLE qname ASTERISK?  (COMMA qname ASTERISK? )*)?     #createPublication
     | CREATE SUBSCRIPTION name=ident CONNECTION conninfo=expr
           PUBLICATION publications=idents
           withProperties?                                                            #createSubscription
+    | CREATE SERVER (IF NOT EXISTS)? name=ident
+          FOREIGN DATA WRAPPER fdw=ident kvOptions?                                  #createServer
     ;
+
+
+mappedUser
+    : userName=ident
+    | USER
+    | CURRENT_ROLE
+    | CURRENT_USER
+    ;
+
+
+kvOptions
+    : OPTIONS OPEN_ROUND_BRACKET kvOption (COMMA kvOption)* CLOSE_ROUND_BRACKET
+    ;
+
+
+kvOption
+    : ident parameterOrLiteral
+    ;
+
+alterServerOptions
+    : OPTIONS OPEN_ROUND_BRACKET kvOptionWithOperation (COMMA kvOptionWithOperation)* CLOSE_ROUND_BRACKET
+    ;
+
+kvOptionWithOperation
+    : operation=(ADD | SET)? ident parameterOrLiteral
+    | ident parameterOrLiteral
+    | operation=DROP ident
+    ;
+
 
 
 functionArgument
@@ -627,17 +684,17 @@ blobClusteredInto
 
 tableElement
     : columnDefinition                                                               #columnDefinitionDefault
-    | PRIMARY_KEY columns                                                            #primaryKeyConstraint
+    | primaryKeyContraint columns                                                    #primaryKeyConstraintTableLevel
     | INDEX name=ident USING method=ident columns withProperties?                    #indexDefinition
     | checkConstraint                                                                #tableCheckConstraint
     ;
 
 columnDefinition
-    : ident dataType? (DEFAULT defaultExpr=expr)? ((GENERATED ALWAYS)? AS generatedExpr=expr)? columnConstraint*
+    : ident dataType? columnConstraint*
     ;
 
 addColumnDefinition
-    : ADD COLUMN? subscriptSafe dataType? ((GENERATED ALWAYS)? AS expr)? columnConstraint*
+    : ADD COLUMN? subscriptSafe dataType? columnConstraint*
     ;
 
 dropColumnDefinition
@@ -679,12 +736,19 @@ objectTypeDefinition
     ;
 
 columnConstraint
-    : PRIMARY_KEY                                                                    #columnConstraintPrimaryKey
+    : primaryKeyContraint                                                            #columnConstraintPrimaryKey
     | NOT NULL                                                                       #columnConstraintNotNull
+    | NULL																			 #columnConstraintNull
     | INDEX USING method=ident withProperties?                                       #columnIndexConstraint
     | INDEX OFF                                                                      #columnIndexOff
     | STORAGE withProperties                                                         #columnStorageDefinition
+    | (CONSTRAINT name=ident)? DEFAULT defaultExpr=expr                              #columnDefaultConstraint
+    | (CONSTRAINT name=ident)? (GENERATED ALWAYS)? AS generatedExpr=expr             #columnGeneratedConstraint
     | checkConstraint                                                                #columnCheckConstraint
+    ;
+
+primaryKeyContraint
+    : (CONSTRAINT name=ident)? PRIMARY_KEY
     ;
 
 checkConstraint
@@ -709,7 +773,7 @@ explainOptions
    ;
 
 explainOption
-   : (ANALYZE | COSTS) booleanLiteral?
+   : (ANALYZE | COSTS | VERBOSE) booleanLiteral?
    ;
 
 matchPredicateIdents
@@ -767,7 +831,7 @@ on
     : ON
     ;
 
-clazz
+securable
     : SCHEMA
     | TABLE
     | VIEW
@@ -829,8 +893,11 @@ nonReserved
     | BOTH
     | BYTE
     | CANCEL
+    | CASCADE
     | CATALOGS
     | CHARACTER
+    | CHAR
+    | CHAR_SPECIAL
     | CHARACTERISTICS
     | CHAR_FILTERS
     | CHECK
@@ -850,6 +917,7 @@ nonReserved
     | CURRENT_TIMESTAMP
     | CURSOR
     | DANGLING
+    | DATA
     | DAY
     | DEALLOCATE
     | DECLARE
@@ -870,6 +938,7 @@ nonReserved
     | FILTER
     | FLOAT
     | FOLLOWING
+    | FOREIGN
     | FORMAT
     | FORWARD
     | FULLTEXT
@@ -899,9 +968,11 @@ nonReserved
     | LOCAL
     | LOGICAL
     | LONG
+    | MAPPING
     | MATERIALIZED
     | METADATA
     | MINUTE
+    | MILLISECOND
     | MONTH
     | MOVE
     | NEXT
@@ -911,12 +982,14 @@ nonReserved
     | ONLY
     | OPEN
     | OPTIMIZE
+    | OPTIONS
     | OVER
     | PARTITION
     | PARTITIONED
     | PARTITIONS
     | PLAIN
     | PLANS
+    | POSITION
     | PRECEDING
     | PRECISION
     | PREPARE
@@ -936,9 +1009,11 @@ nonReserved
     | REROUTE
     | RESPECT
     | RESTORE
+    | RESTRICT
     | RETRY
     | RETURN
     | RETURNING
+    | ROLE
     | ROW
     | ROWS
     | SCHEMA
@@ -947,6 +1022,7 @@ nonReserved
     | SECOND
     | SEQUENCES
     | SERIALIZABLE
+    | SERVER
     | SESSION
     | SHARD
     | SHARDS
@@ -971,8 +1047,8 @@ nonReserved
     | TIMESTAMP
     | TIMESTAMP
     | TO
-    | TOKEN_FILTERS
     | TOKENIZER
+    | TOKEN_FILTERS
     | TRAILING
     | TRANSACTION
     | TRANSACTION_ISOLATION
@@ -981,10 +1057,12 @@ nonReserved
     | UNCOMMITTED
     | VALUES
     | VARYING
+    | VERBOSE
     | VIEW
     | WINDOW
     | WITHOUT
     | WORK
+    | WRAPPER
     | WRITE
     | YEAR
     | ZONE

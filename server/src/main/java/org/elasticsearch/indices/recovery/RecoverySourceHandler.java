@@ -42,6 +42,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.IndexCommit;
+import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.IndexFormatTooNewException;
 import org.apache.lucene.index.IndexFormatTooOldException;
 import org.apache.lucene.store.IOContext;
@@ -49,12 +50,11 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.RateLimiter;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.SetOnce;
-import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRunnable;
 import org.elasticsearch.action.StepListener;
-import org.elasticsearch.action.support.PlainActionFuture;
+import org.elasticsearch.action.support.PlainFuture;
 import org.elasticsearch.action.support.ThreadedActionListener;
 import org.elasticsearch.action.support.replication.ReplicationResponse;
 import org.elasticsearch.cluster.routing.IndexShardRoutingTable;
@@ -91,6 +91,7 @@ import org.elasticsearch.transport.Transports;
 
 import io.crate.common.io.IOUtils;
 import io.crate.common.unit.TimeValue;
+import io.crate.exceptions.SQLExceptions;
 
 /**
  * RecoverySourceHandler handles the three phases of shard recovery, which is
@@ -451,7 +452,7 @@ public class RecoverySourceHandler {
     }
 
     private void runWithGenericThreadPool(CheckedRunnable<Exception> task) {
-        final PlainActionFuture<Void> future = new PlainActionFuture<>();
+        final PlainFuture<Void> future = new PlainFuture<>();
         assert threadPool.generic().isShutdown() == false;
         // TODO: We shouldn't use the generic thread pool here as we already execute this from the generic pool.
         //       While practically unlikely at a min pool size of 128 we could technically block the whole pool by waiting on futures
@@ -982,13 +983,19 @@ public class RecoverySourceHandler {
                 protected void onNewResource(StoreFileMetadata md) throws IOException {
                     offset = 0;
                     IOUtils.close(currentInput, () -> currentInput = null);
-                    final IndexInput indexInput = store.directory().openInput(md.name(), IOContext.READONCE);
-                    currentInput = new InputStreamIndexInput(indexInput, md.length()) {
-                        @Override
-                        public void close() throws IOException {
-                            IOUtils.close(indexInput, super::close); // InputStreamIndexInput's close is a noop
-                        }
-                    };
+                    // Open all files other than Segments* using IOContext.READ.
+                    // With Lucene9_12 a READONCE context will confine the underlying IndexInput (MemorySegmentIndexInput) to a single thread.
+                    // Segments* files require IOContext.READONCE
+                    // https://github.com/apache/lucene/blob/b2d3a2b37e00f19a74949097736be8fd64745f61/lucene/test-framework/src/java/org/apache/lucene/tests/store/MockDirectoryWrapper.java#L817
+                    if (md.name().startsWith(IndexFileNames.SEGMENTS) == false) {
+                        final IndexInput indexInput = store.directory().openInput(md.name(), IOContext.READ);
+                        currentInput = new InputStreamIndexInput(indexInput, md.length()) {
+                            @Override
+                            public void close() throws IOException {
+                                IOUtils.close(indexInput, super::close); // InputStreamIndexInput's close is a noop
+                            }
+                        };
+                    }
                 }
 
                 private byte[] acquireBuffer() {
@@ -999,12 +1006,26 @@ public class RecoverySourceHandler {
                     return new byte[chunkSizeInBytes];
                 }
 
+                private int readBytes(StoreFileMetadata md, byte[] buffer) throws IOException {
+                    // if we don't have a currentInput by now open once to create the chunk.
+                    if (currentInput == null) {
+                        try (IndexInput indexInput = store.directory().openInput(md.name(), IOContext.READONCE)) {
+                            try (InputStreamIndexInput in = new InputStreamIndexInput(indexInput, md.length())) {
+                                in.skip(offset);
+                                return in.read(buffer);
+                            }
+                        }
+                    } else {
+                        return currentInput.read(buffer);
+                    }
+                }
+
                 @Override
                 protected FileChunk nextChunkRequest(StoreFileMetadata md) throws IOException {
                     assert Transports.assertNotTransportThread("read file chunk");
                     cancellableThreads.checkForCancel();
                     final byte[] buffer = acquireBuffer();
-                    final int bytesRead = currentInput.read(buffer);
+                    final int bytesRead = readBytes(md, buffer);
                     if (bytesRead == -1) {
                         throw new CorruptIndexException("file truncated; length=" + md.length() + " offset=" + offset, md.name());
                     }
@@ -1071,7 +1092,7 @@ public class RecoverySourceHandler {
     }
 
     private void handleErrorOnSendFiles(Store store, Exception e, StoreFileMetadata[] mds) throws Exception {
-        final IOException corruptIndexException = ExceptionsHelper.unwrapCorruption(e);
+        final IOException corruptIndexException = SQLExceptions.unwrapCorruption(e);
         assert Transports.assertNotTransportThread(RecoverySourceHandler.this + "[handle error on send/clean files]");
         if (corruptIndexException != null) {
             Exception localException = null;

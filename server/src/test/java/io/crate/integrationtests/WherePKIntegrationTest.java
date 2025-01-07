@@ -22,7 +22,6 @@
 package io.crate.integrationtests;
 
 import static io.crate.testing.Asserts.assertThat;
-import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Arrays;
 import java.util.List;
@@ -295,7 +294,7 @@ public class WherePKIntegrationTest extends IntegTestCase {
 
         execute("delete from expl_routing where name = ''");
         assertThat(response).hasRowCount(2L);
-        refresh();
+        execute("refresh table expl_routing");
         execute("select count(*) from expl_routing");
         assertThat(response).hasRowCount(1);
     }

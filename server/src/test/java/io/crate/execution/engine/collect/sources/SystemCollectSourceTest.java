@@ -21,8 +21,7 @@
 
 package io.crate.execution.engine.collect.sources;
 
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import java.util.ArrayList;
@@ -34,6 +33,8 @@ import java.util.stream.StreamSupport;
 
 import org.elasticsearch.cluster.routing.ShardRoutingState;
 import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.UUIDs;
+import org.elasticsearch.index.Index;
 import org.elasticsearch.test.IntegTestCase;
 import org.junit.Test;
 
@@ -88,12 +89,12 @@ public class SystemCollectSourceTest extends IntegTestCase {
             false
         ).apply(Collections.singletonList(new UnassignedShard(
             1,
-            "foo",
+            new Index("foo", UUIDs.randomBase64UUID()),
             mock(ClusterService.class),
             true,
             ShardRoutingState.UNASSIGNED)));
         Row next = rows.iterator().next();
-        assertThat(next.numColumns(), is(1));
+        assertThat(next.numColumns()).isEqualTo(1);
     }
 
     private StaticTableReferenceResolver<UnassignedShard> unassignedShardRefResolver() {
@@ -123,10 +124,10 @@ public class SystemCollectSourceTest extends IntegTestCase {
         Iterable<? extends Row> rows = systemCollectSource.toRowsIterableTransformation(
             collectPhase, txnCtx, unassignedShardRefResolver(), false)
             .apply(noReadIsolationIterable);
-        assertThat(StreamSupport.stream(rows.spliterator(), false).count(), is(2L));
+        assertThat(StreamSupport.stream(rows.spliterator(), false).count()).isEqualTo(2L);
 
         noReadIsolationIterable.add("c");
-        assertThat(StreamSupport.stream(rows.spliterator(), false).count(), is(3L));
+        assertThat(StreamSupport.stream(rows.spliterator(), false).count()).isEqualTo(3L);
 
         // Read isolation
         List<String> readIsolationIterable = new ArrayList<>();
@@ -135,9 +136,9 @@ public class SystemCollectSourceTest extends IntegTestCase {
 
         rows = systemCollectSource.toRowsIterableTransformation(collectPhase, txnCtx, unassignedShardRefResolver(), true)
             .apply(readIsolationIterable);
-        assertThat(StreamSupport.stream(rows.spliterator(), false).count(), is(2L));
+        assertThat(StreamSupport.stream(rows.spliterator(), false).count()).isEqualTo(2L);
 
         readIsolationIterable.add("c");
-        assertThat(StreamSupport.stream(rows.spliterator(), false).count(), is(2L));
+        assertThat(StreamSupport.stream(rows.spliterator(), false).count()).isEqualTo(2L);
     }
 }

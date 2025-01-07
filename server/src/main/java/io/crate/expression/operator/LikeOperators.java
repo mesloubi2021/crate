@@ -21,6 +21,7 @@
 
 package io.crate.expression.operator;
 
+import java.util.Locale;
 import java.util.regex.Pattern;
 
 import org.apache.lucene.index.Term;
@@ -28,11 +29,18 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.WildcardQuery;
 import org.jetbrains.annotations.Nullable;
 
+import io.crate.expression.operator.all.AllLikeOperator;
+import io.crate.expression.operator.all.AllNotLikeOperator;
+import io.crate.expression.operator.all.AllOperator;
 import io.crate.expression.operator.any.AnyLikeOperator;
 import io.crate.expression.operator.any.AnyNotLikeOperator;
 import io.crate.expression.operator.any.AnyOperator;
 import io.crate.lucene.match.CrateRegexQuery;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
+import io.crate.metadata.Scalar;
 import io.crate.metadata.functions.Signature;
+import io.crate.sql.tree.ArrayComparison;
 import io.crate.types.DataTypes;
 
 public class LikeOperators {
@@ -44,18 +52,40 @@ public class LikeOperators {
     public static final String ANY_NOT_LIKE = AnyOperator.OPERATOR_PREFIX + "not_like";
     public static final String ANY_NOT_ILIKE = AnyOperator.OPERATOR_PREFIX + "not_ilike";
 
-    public static final char DEFAULT_ESCAPE = '\\';
+    public static final String ALL_LIKE = AllOperator.OPERATOR_PREFIX + "like";
+    public static final String ALL_ILIKE = AllOperator.OPERATOR_PREFIX + "ilike";
+    public static final String ALL_NOT_LIKE = AllOperator.OPERATOR_PREFIX + "not_like";
+    public static final String ALL_NOT_ILIKE = AllOperator.OPERATOR_PREFIX + "not_ilike";
 
-    public static String arrayOperatorName(boolean ignoreCase) {
+    public static final Character DEFAULT_ESCAPE = '\\';
+    /**
+     *  To avoid creating a String out of {@link #DEFAULT_ESCAPE} every time
+     *  inside the {@link AnyOperator#validateRightArg(Object)}
+     */
+    public static final String DEFAULT_ESCAPE_STR = "\\";
+
+    public static String likeOperatorName(boolean ignoreCase) {
         return ignoreCase ? OP_ILIKE : OP_LIKE;
     }
 
-    public static String arrayOperatorName(boolean negate, boolean ignoreCase) {
+    public static String arrayOperatorName(ArrayComparison.Quantifier q, boolean negate, boolean ignoreCase) {
         String name;
-        if (negate) {
-            name = ignoreCase ? ANY_NOT_ILIKE : ANY_NOT_LIKE;
-        } else {
-            name = ignoreCase ? ANY_ILIKE : ANY_LIKE;
+        switch (q) {
+            case ANY -> {
+                if (negate) {
+                    name = ignoreCase ? ANY_NOT_ILIKE : ANY_NOT_LIKE;
+                } else {
+                    name = ignoreCase ? ANY_ILIKE : ANY_LIKE;
+                }
+            }
+            case ALL -> {
+                if (negate) {
+                    name = ignoreCase ? ALL_NOT_ILIKE : ALL_NOT_LIKE;
+                } else {
+                    name = ignoreCase ? ALL_ILIKE : ALL_LIKE;
+                }
+            }
+            default -> throw new IllegalStateException("An invalid array operator: " + q);
         }
         return name;
     }
@@ -64,7 +94,7 @@ public class LikeOperators {
         SENSITIVE {
 
             @Override
-            public Query likeQuery(String fqColumn, String pattern, boolean isIndexed) {
+            public Query likeQuery(String fqColumn, String pattern, Character escapeChar, boolean isIndexed) {
                 if (isIndexed) {
                     String luceneWildcard = convertSqlLikeToLuceneWildcard(pattern);
                     Term term = new Term(fqColumn, luceneWildcard);
@@ -82,9 +112,9 @@ public class LikeOperators {
         INSENSITIVE {
 
             @Override
-            public Query likeQuery(String fqColumn, String pattern, boolean isIndexed) {
+            public Query likeQuery(String fqColumn, String pattern, Character escapeChar, boolean isIndexed) {
                 if (isIndexed) {
-                    String regex = patternToRegex(pattern);
+                    String regex = patternToRegex(pattern, escapeChar);
                     Term term = new Term(fqColumn, regex);
                     return new CrateRegexQuery(term, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
                 }
@@ -98,39 +128,58 @@ public class LikeOperators {
         };
 
         @Nullable
-        public abstract Query likeQuery(String fqColumn, String pattern, boolean isIndexed);
+        public abstract Query likeQuery(String fqColumn, String pattern, Character escapeChar, boolean isIndexed);
 
         public abstract int patternFlags();
     }
 
-    public static void register(OperatorModule module) {
-        module.register(
-            Signature.scalar(
-                OP_LIKE,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature(),
-                Operator.RETURN_TYPE.getTypeSignature()
-            ),
+    public static void register(Functions.Builder builder) {
+        builder.add(
+            Signature.builder(OP_LIKE, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING.getTypeSignature())
+                .returnType(Operator.RETURN_TYPE.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new LikeOperator(signature, boundSignature, LikeOperators::matches, CaseSensitivity.SENSITIVE)
         );
-        module.register(
-            Signature.scalar(
-                OP_ILIKE,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature(),
-                Operator.RETURN_TYPE.getTypeSignature()
-            ),
+        builder.add(
+            Signature.builder(OP_ILIKE, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING.getTypeSignature())
+                .returnType(Operator.RETURN_TYPE.getTypeSignature())
+                .features(Scalar.Feature.STRICTNULL, Scalar.Feature.DETERMINISTIC)
+                .build(),
             (signature, boundSignature) ->
                 new LikeOperator(signature, boundSignature, LikeOperators::matches, CaseSensitivity.INSENSITIVE)
         );
-        module.register(
-            Signature.scalar(
-                ANY_LIKE,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING_ARRAY.getTypeSignature(),
-                Operator.RETURN_TYPE.getTypeSignature()
-            ),
+
+        builder.add(
+            Signature.builder(OP_LIKE, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(), DataTypes.STRING.getTypeSignature(), DataTypes.STRING.getTypeSignature())
+                .returnType(Operator.RETURN_TYPE.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC)
+                .build(),
+            (signature, boundSignature) ->
+                new LikeOperator(signature, boundSignature, LikeOperators::matches, CaseSensitivity.SENSITIVE)
+        );
+        builder.add(
+            Signature.builder(OP_ILIKE, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(), DataTypes.STRING.getTypeSignature(), DataTypes.STRING.getTypeSignature())
+                .returnType(Operator.RETURN_TYPE.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC)
+                .build(),
+            (signature, boundSignature) ->
+                new LikeOperator(signature, boundSignature, LikeOperators::matches, CaseSensitivity.INSENSITIVE)
+        );
+        builder.add(
+            Signature.builder(ANY_LIKE, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING_ARRAY.getTypeSignature())
+                .returnType(Operator.RETURN_TYPE.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new AnyLikeOperator(
                     signature,
@@ -138,13 +187,13 @@ public class LikeOperators {
                     CaseSensitivity.SENSITIVE
                 )
         );
-        module.register(
-            Signature.scalar(
-                ANY_NOT_LIKE,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING_ARRAY.getTypeSignature(),
-                Operator.RETURN_TYPE.getTypeSignature()
-            ),
+        builder.add(
+            Signature.builder(ANY_NOT_LIKE, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING_ARRAY.getTypeSignature())
+                .returnType(Operator.RETURN_TYPE.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new AnyNotLikeOperator(
                     signature,
@@ -152,13 +201,13 @@ public class LikeOperators {
                     CaseSensitivity.SENSITIVE
                 )
         );
-        module.register(
-            Signature.scalar(
-                ANY_ILIKE,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING_ARRAY.getTypeSignature(),
-                Operator.RETURN_TYPE.getTypeSignature()
-            ),
+        builder.add(
+            Signature.builder(ANY_ILIKE, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING_ARRAY.getTypeSignature())
+                .returnType(Operator.RETURN_TYPE.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new AnyLikeOperator(
                     signature,
@@ -166,13 +215,13 @@ public class LikeOperators {
                     CaseSensitivity.INSENSITIVE
                 )
         );
-        module.register(
-            Signature.scalar(
-                ANY_NOT_ILIKE,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING_ARRAY.getTypeSignature(),
-                Operator.RETURN_TYPE.getTypeSignature()
-            ),
+        builder.add(
+            Signature.builder(ANY_NOT_ILIKE, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING_ARRAY.getTypeSignature())
+                .returnType(Operator.RETURN_TYPE.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new AnyNotLikeOperator(
                     signature,
@@ -180,26 +229,78 @@ public class LikeOperators {
                     CaseSensitivity.INSENSITIVE
                 )
         );
+        builder.add(
+            Signature.builder(ALL_LIKE, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING_ARRAY.getTypeSignature())
+                .returnType(Operator.RETURN_TYPE.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
+            (signature, boundSignature) ->
+                new AllLikeOperator(
+                    signature,
+                    boundSignature,
+                    CaseSensitivity.SENSITIVE
+                )
+        );
+        builder.add(
+            Signature.builder(ALL_NOT_LIKE, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING_ARRAY.getTypeSignature())
+                .returnType(Operator.RETURN_TYPE.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
+            (signature, boundSignature) ->
+                new AllNotLikeOperator(
+                    signature,
+                    boundSignature,
+                    CaseSensitivity.SENSITIVE
+                )
+        );
+        builder.add(
+            Signature.builder(ALL_ILIKE, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING_ARRAY.getTypeSignature())
+                .returnType(Operator.RETURN_TYPE.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
+            (signature, boundSignature) ->
+                new AllLikeOperator(
+                    signature,
+                    boundSignature,
+                    CaseSensitivity.INSENSITIVE
+                )
+        );
+        builder.add(
+            Signature.builder(ALL_NOT_ILIKE, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING_ARRAY.getTypeSignature())
+                .returnType(Operator.RETURN_TYPE.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
+            (signature, boundSignature) ->
+                new AllNotLikeOperator(
+                    signature,
+                    boundSignature,
+                    CaseSensitivity.INSENSITIVE
+                )
+        );
     }
 
-    static final Pattern makePattern(String pattern, CaseSensitivity caseSensitivity) {
-        return Pattern.compile(patternToRegex(pattern, DEFAULT_ESCAPE, true), caseSensitivity.patternFlags());
+    static final Pattern makePattern(String pattern, CaseSensitivity caseSensitivity, Character escape) {
+        return Pattern.compile(patternToRegex(pattern, escape), caseSensitivity.patternFlags());
     }
 
-    public static boolean matches(String expression, String pattern, CaseSensitivity caseSensitivity) {
-        return makePattern(pattern, caseSensitivity).matcher(expression).matches();
+    public static boolean matches(String expression, String pattern, Character escape, CaseSensitivity caseSensitivity) {
+        return makePattern(pattern, caseSensitivity, escape).matcher(expression).matches();
     }
 
-    public static String patternToRegex(String patternString) {
-        return patternToRegex(patternString, DEFAULT_ESCAPE, true);
-    }
-
-    public static String patternToRegex(String patternString, char escapeChar, boolean shouldEscape) {
+    public static String patternToRegex(String patternString, @Nullable Character escapeChar) {
         StringBuilder regex = new StringBuilder(patternString.length() * 2);
         regex.append('^');
         boolean escaped = false;
         for (char currentChar : patternString.toCharArray()) {
-            if (shouldEscape && !escaped && currentChar == escapeChar) {
+            if (escapeChar != null && !escaped && currentChar == escapeChar) {
                 escaped = true;
             } else {
                 switch (currentChar) {
@@ -247,6 +348,9 @@ public class LikeOperators {
                 }
             }
         }
+        if (escaped) {
+            throwErrorForTrailingEscapeChar(patternString, escapeChar);
+        }
         regex.append('$');
         return regex.toString();
     }
@@ -285,6 +389,15 @@ public class LikeOperators {
                 }
             }
         }
+        if (escaped) {
+            throwErrorForTrailingEscapeChar(wildcardString, LikeOperators.DEFAULT_ESCAPE);
+        }
         return regex.toString();
+    }
+
+    public static void throwErrorForTrailingEscapeChar(String pattern, Character escapeChar) {
+        throw new IllegalArgumentException(
+            String.format(Locale.ENGLISH, "pattern '%s' must not end with escape character '%s'",
+                pattern, escapeChar));
     }
 }

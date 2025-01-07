@@ -228,6 +228,10 @@ public abstract class AstVisitor<R, C> {
         return visitQueryBody(node, context);
     }
 
+    protected R visitGroupBy(GroupBy node, C context) {
+        return visitNode(node, context);
+    }
+
     protected R visitAliasedRelation(AliasedRelation node, C context) {
         return visitRelation(node, context);
     }
@@ -288,7 +292,7 @@ public abstract class AstVisitor<R, C> {
         return visitStatement(node, context);
     }
 
-    public R visitCreateTableAs(CreateTableAs node, C context) {
+    public R visitCreateTableAs(CreateTableAs<?> node, C context) {
         return visitStatement(node, context);
     }
 
@@ -304,7 +308,7 @@ public abstract class AstVisitor<R, C> {
         return visitStatement(node, context);
     }
 
-    public R visitDropUser(DropUser node, C context) {
+    public R visitDropRole(DropRole node, C context) {
         return visitStatement(node, context);
     }
 
@@ -324,7 +328,7 @@ public abstract class AstVisitor<R, C> {
         return visitStatement(node, context);
     }
 
-    public R visitTableElement(TableElement node, C context) {
+    public R visitTableElement(TableElement<?> node, C context) {
         return visitNode(node, context);
     }
 
@@ -356,6 +360,10 @@ public abstract class AstVisitor<R, C> {
         return visitNode(node, context);
     }
 
+    public R visitNullColumnConstraint(NullColumnConstraint<?> node, C context) {
+        return visitNode(node, context);
+    }
+
     public R visitIndexColumnConstraint(IndexColumnConstraint<?> node, C context) {
         return visitNode(node, context);
     }
@@ -381,6 +389,14 @@ public abstract class AstVisitor<R, C> {
     }
 
     public R visitCheckColumnConstraint(CheckColumnConstraint<?> node, C context) {
+        return visitNode(node, context);
+    }
+
+    public R visitDefaultConstraint(DefaultConstraint<?> node, C context) {
+        return visitNode(node, context);
+    }
+
+    public R visitGeneratedExpressionConstraint(GeneratedExpressionConstraint<?> node, C context) {
         return visitNode(node, context);
     }
 
@@ -444,7 +460,7 @@ public abstract class AstVisitor<R, C> {
         return visitStatement(node, context);
     }
 
-    public R visitAlterTableRename(AlterTableRename<?> node, C context) {
+    public R visitAlterTableRenameTable(AlterTableRenameTable<?> node, C context) {
         return visitStatement(node, context);
     }
 
@@ -452,15 +468,15 @@ public abstract class AstVisitor<R, C> {
         return visitStatement(node, context);
     }
 
-    public R visitAlterBlobTable(AlterBlobTable<?> node, C context) {
-        return visitStatement(node, context);
-    }
-
     public R visitAlterClusterRerouteRetryFailed(AlterClusterRerouteRetryFailed node, C context) {
         return visitStatement(node, context);
     }
 
-    public R visitAlterUser(AlterUser<?> node, C context) {
+    public R visitAlterRoleSet(AlterRoleSet<?> node, C context) {
+        return visitStatement(node, context);
+    }
+
+    public R visitAlterRoleReset(AlterRoleReset node, C context) {
         return visitStatement(node, context);
     }
 
@@ -468,7 +484,7 @@ public abstract class AstVisitor<R, C> {
         return visitStatement(node, context);
     }
 
-    public R visitPartitionedBy(PartitionedBy node, C context) {
+    public R visitPartitionedBy(PartitionedBy<?> node, C context) {
         return visitNode(node, context);
     }
 
@@ -509,6 +525,10 @@ public abstract class AstVisitor<R, C> {
     }
 
     public R visitAlterTableDropColumnStatement(AlterTableDropColumn<?> node, C context) {
+        return visitStatement(node, context);
+    }
+
+    public R visitAlterTableRenameColumnStatement(AlterTableRenameColumn<?> node, C context) {
         return visitStatement(node, context);
     }
 
@@ -592,7 +612,7 @@ public abstract class AstVisitor<R, C> {
         return visitStatement(node, context);
     }
 
-    public R visitCreateUser(CreateUser<?> node, C context) {
+    public R visitCreateRole(CreateRole node, C context) {
         return visitStatement(node, context);
     }
 
@@ -698,5 +718,37 @@ public abstract class AstVisitor<R, C> {
 
     public R visitClose(Close close, C context) {
         return visitStatement(close, context);
+    }
+
+    public R visitCreateServer(CreateServer createServer, C context) {
+        return visitStatement(createServer, context);
+    }
+
+    public R visitAlterServer(AlterServer<?> alterServer, C context) {
+        return visitStatement(alterServer, context);
+    }
+
+    public R visitCreateForeignTable(CreateForeignTable createForeignTable, C context) {
+        return visitStatement(createForeignTable, context);
+    }
+
+    public R visitCreateUserMapping(CreateUserMapping createUserMapping, C context) {
+        return visitStatement(createUserMapping, context);
+    }
+
+    public R visitDropServer(DropServer dropServer, C context) {
+        return visitStatement(dropServer, context);
+    }
+
+    public R visitDropForeignTable(DropForeignTable dropForeignTable, C context) {
+        return visitStatement(dropForeignTable, context);
+    }
+
+    public R visitDropUserMapping(DropUserMapping dropUserMapping, C context) {
+        return visitStatement(dropUserMapping, context);
+    }
+
+    public R visitNumericLiteral(NumericLiteral numericLiteral, C context) {
+        return visitLiteral(numericLiteral, context);
     }
 }

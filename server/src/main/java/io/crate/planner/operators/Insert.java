@@ -22,23 +22,23 @@
 package io.crate.planner.operators;
 
 import java.util.Collection;
-import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.SequencedCollection;
 import java.util.Set;
 
 import org.jetbrains.annotations.Nullable;
 
 import io.crate.analyze.OrderBy;
-import io.crate.analyze.relations.AbstractTableRelation;
-import io.crate.common.collections.Lists2;
+import io.crate.common.collections.Lists;
 import io.crate.data.Row;
 import io.crate.execution.dsl.projection.ColumnIndexWriterProjection;
 import io.crate.execution.dsl.projection.EvalProjection;
 import io.crate.execution.dsl.projection.MergeCountProjection;
 import io.crate.execution.dsl.projection.Projection;
 import io.crate.execution.dsl.projection.builder.ProjectionBuilder;
+import io.crate.execution.engine.pipeline.LimitAndOffset;
 import io.crate.expression.symbol.SelectSymbol;
 import io.crate.expression.symbol.Symbol;
 import io.crate.metadata.RelationName;
@@ -46,6 +46,7 @@ import io.crate.planner.DependencyCarrier;
 import io.crate.planner.ExecutionPlan;
 import io.crate.planner.Merge;
 import io.crate.planner.PlannerContext;
+import io.crate.planner.ResultDescription;
 
 public class Insert implements LogicalPlan {
 
@@ -91,12 +92,24 @@ public class Insert implements LogicalPlan {
         var boundIndexWriterProjection = writeToTable
             .bind(x -> SubQueryAndParamBinder.convert(x, params, subQueryResults));
 
-        if (sourcePlan.resultDescription().hasRemainingLimitOrOffset()) {
+        ResultDescription resultDescription = sourcePlan.resultDescription();
+        if (resultDescription.hasRemainingLimitOrOffset()) {
             ExecutionPlan localMerge = Merge.ensureOnHandler(sourcePlan, plannerContext);
             localMerge.addProjection(boundIndexWriterProjection);
             return localMerge;
         } else {
-            sourcePlan.addProjection(boundIndexWriterProjection);
+            // this also clears the positional order by if it is present.
+            // Otherwise the following `ensureOnHandler` would try to do a sorted-merge
+            // which doesn't work after boundIndexWriterProjection becuase it returns only
+            // rowcounts in the first column
+            //
+            // Ignoring the ordering is safe as long as there is no limit (which is implied, given `hasRemainingLimitOrOffset` was false)
+            sourcePlan.addProjection(
+                boundIndexWriterProjection,
+                LimitAndOffset.NO_LIMIT,
+                LimitAndOffset.NO_OFFSET,
+                null
+            );
             ExecutionPlan localMerge = Merge.ensureOnHandler(sourcePlan, plannerContext);
             if (sourcePlan != localMerge) {
                 localMerge.addProjection(MergeCountProjection.INSTANCE);
@@ -115,12 +128,7 @@ public class Insert implements LogicalPlan {
     }
 
     @Override
-    public List<AbstractTableRelation<?>> baseTables() {
-        return Collections.emptyList();
-    }
-
-    @Override
-    public List<RelationName> getRelationNames() {
+    public List<RelationName> relationNames() {
         return List.of();
     }
 
@@ -131,11 +139,11 @@ public class Insert implements LogicalPlan {
 
     @Override
     public LogicalPlan replaceSources(List<LogicalPlan> sources) {
-        return new Insert(Lists2.getOnlyElement(sources), writeToTable, applyCasts);
+        return new Insert(Lists.getOnlyElement(sources), writeToTable, applyCasts);
     }
 
     @Override
-    public LogicalPlan pruneOutputsExcept(Collection<Symbol> outputsToKeep) {
+    public LogicalPlan pruneOutputsExcept(SequencedCollection<Symbol> outputsToKeep) {
         LogicalPlan newSource = source.pruneOutputsExcept(source.outputs());
         if (newSource == source) {
             return this;

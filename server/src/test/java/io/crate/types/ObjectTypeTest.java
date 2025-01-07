@@ -21,27 +21,38 @@
 
 package io.crate.types;
 
+import static com.carrotsearch.randomizedtesting.RandomizedTest.assumeFalse;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.nullValue;
-import static org.junit.Assert.assertThat;
 
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.test.ESTestCase;
-import org.hamcrest.Matchers;
 import org.junit.Test;
 
 import io.crate.common.collections.MapBuilder;
 import io.crate.exceptions.ConversionException;
+import io.crate.sql.tree.ColumnPolicy;
+import io.crate.testing.DataTypeTesting;
 
-public class ObjectTypeTest extends ESTestCase {
+public class ObjectTypeTest extends DataTypeTestCase<Map<String, Object>> {
+
+    @Override
+    protected DataDef<Map<String, Object>> getDataDef() {
+        // float vectors will not compare properly so we exclude them here
+        DataType<?> innerType
+            = DataTypeTesting.randomTypeExcluding(Set.of(FloatVectorType.INSTANCE_ONE, ObjectType.UNTYPED));
+        DataType<Map<String, Object>> objectType
+            = ObjectType.of(ColumnPolicy.DYNAMIC).setInnerType("x", innerType).build();
+        String definition = "OBJECT AS (x " + innerType.getTypeSignature() + ")";
+        return new DataDef<>(objectType, definition, DataTypeTesting.getDataGenerator(objectType));
+    }
 
     @Test
     public void testStreamingWithoutInnerTypes() throws IOException {
@@ -52,26 +63,26 @@ public class ObjectTypeTest extends ESTestCase {
         StreamInput in = out.bytes().streamInput();
         ObjectType otherType = new ObjectType(in);
 
-        assertThat(otherType.innerTypes().size(), is(0));
+        assertThat(otherType.innerTypes()).isEmpty();
     }
 
     @Test
     public void testStreamingWithEmptyInnerTypes() throws IOException {
-        ObjectType type = ObjectType.builder().build();
+        ObjectType type = ObjectType.of(ColumnPolicy.DYNAMIC).build();
         BytesStreamOutput out = new BytesStreamOutput();
         type.writeTo(out);
 
         StreamInput in = out.bytes().streamInput();
         ObjectType otherType = new ObjectType(in);
 
-        assertThat(otherType.innerTypes(), is(type.innerTypes()));
+        assertThat(otherType.innerTypes()).isEqualTo(type.innerTypes());
     }
 
     @Test
     public void testStreamingWithInnerTypes() throws IOException {
-        ObjectType type = ObjectType.builder()
+        ObjectType type = ObjectType.of(ColumnPolicy.DYNAMIC)
             .setInnerType("s", DataTypes.STRING)
-            .setInnerType("obj_array", new ArrayType<>(ObjectType.builder()
+            .setInnerType("obj_array", new ArrayType<>(ObjectType.of(ColumnPolicy.DYNAMIC)
                 .setInnerType("i", DataTypes.INTEGER)
                 .build()))
             .build();
@@ -81,7 +92,7 @@ public class ObjectTypeTest extends ESTestCase {
         StreamInput in = out.bytes().streamInput();
         ObjectType otherType = new ObjectType(in);
 
-        assertThat(otherType.innerTypes(), is(type.innerTypes()));
+        assertThat(otherType.innerTypes()).isEqualTo(type.innerTypes());
     }
 
     @Test
@@ -95,15 +106,14 @@ public class ObjectTypeTest extends ESTestCase {
         ObjectType otherType = DataTypes.UNTYPED_OBJECT;
 
         Object v = otherType.readValueFrom(in);
-
-        assertThat(v, nullValue());
+        assertThat(v).isNull();
     }
 
     @Test
     public void testStreamingOfNullValueWithInnerTypes() throws IOException {
-        ObjectType type = ObjectType.builder()
+        ObjectType type = ObjectType.of(ColumnPolicy.DYNAMIC)
             .setInnerType("s", DataTypes.STRING)
-            .setInnerType("obj_array", new ArrayType<>(ObjectType.builder()
+            .setInnerType("obj_array", new ArrayType<>(ObjectType.of(ColumnPolicy.DYNAMIC)
                 .setInnerType("i", DataTypes.INTEGER)
                 .build()))
             .build();
@@ -116,15 +126,15 @@ public class ObjectTypeTest extends ESTestCase {
         ObjectType otherType = new ObjectType(in);
 
         Object v = otherType.readValueFrom(in);
-
-        assertThat(v, nullValue());
+        assertThat(v).isNull();
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     public void testStreamingOfValueWithInnerTypes() throws IOException {
-        ObjectType type = ObjectType.builder()
+        ObjectType type = ObjectType.of(ColumnPolicy.DYNAMIC)
             .setInnerType("s", DataTypes.STRING)
-            .setInnerType("obj_array", new ArrayType<>(ObjectType.builder()
+            .setInnerType("obj_array", new ArrayType<>(ObjectType.of(ColumnPolicy.DYNAMIC)
                 .setInnerType("i", DataTypes.INTEGER)
                 .build()))
             .build();
@@ -141,8 +151,8 @@ public class ObjectTypeTest extends ESTestCase {
 
         Map<String, Object> v = otherType.readValueFrom(in);
 
-        assertThat(v.get("s"), is(map.get("s")));
-        assertThat((List<Map>) v.get("obj_array"), Matchers.contains((Map.of("i", 0))));
+        assertThat(v.get("s")).isEqualTo(map.get("s"));
+        assertThat((List<Map<?, ?>>) v.get("obj_array")).containsExactly(Map.of("i", 0));
     }
 
     @Test
@@ -165,28 +175,28 @@ public class ObjectTypeTest extends ESTestCase {
 
         Map<String, Object> v = otherType.readValueFrom(in);
 
-        assertThat(v.get("s"), is(map.get("s")));
-        assertThat(Objects.deepEquals(v.get("obj_array"), innerArray), is(true));
+        assertThat(v.get("s")).isEqualTo(map.get("s"));
+        assertThat(Objects.deepEquals(v.get("obj_array"), innerArray)).isTrue();
     }
 
     @Test
     public void testResolveInnerType() {
-        ObjectType type = ObjectType.builder()
+        ObjectType type = ObjectType.of(ColumnPolicy.DYNAMIC)
             .setInnerType("s", DataTypes.STRING)
-            .setInnerType("inner", ObjectType.builder()
+            .setInnerType("inner", ObjectType.of(ColumnPolicy.DYNAMIC)
                 .setInnerType("i", DataTypes.INTEGER)
                 .build())
             .build();
 
-        assertThat(type.resolveInnerType(List.of("s", "inner", "i")), is(DataTypes.INTEGER));
+        assertThat(type.innerType(List.of("s", "inner", "i"))).isEqualTo(DataTypes.INTEGER);
     }
 
     @Test
     public void test_object_type_to_signature_to_object_type_round_trip() {
-        var objectType = ObjectType.builder()
+        var objectType = ObjectType.of(ColumnPolicy.DYNAMIC)
             .setInnerType("inner field", DataTypes.STRING)
             .build();
-        assertThat(objectType.getTypeSignature().createType(), is(objectType));
+        assertThat(objectType.getTypeSignature().createType()).isEqualTo(objectType);
     }
 
     @Test
@@ -194,5 +204,33 @@ public class ObjectTypeTest extends ESTestCase {
         assertThatThrownBy(() -> ObjectType.UNTYPED.implicitCast("foo"))
             .isExactlyInstanceOf(ConversionException.class)
             .hasMessage("Cannot cast value `foo` to type `object`");
+    }
+
+    @Override
+    public void test_reference_resolver_docvalues_off() throws Exception {
+        assumeFalse("ObjectType cannot disable column store", true);
+    }
+
+    @Override
+    public void test_reference_resolver_index_and_docvalues_off() throws Exception {
+        assumeFalse("ObjectType cannot disable column store", true);
+    }
+
+    @Override
+    public void test_reference_resolver_index_off() throws Exception {
+        assumeFalse("ObjectType cannot disable index", true);
+    }
+
+    @Test
+    public void test_value_bytes_accounts_for_deep_objects() throws Exception {
+        String str = "a".repeat(1024);
+        long valueBytes = ObjectType.UNTYPED.valueBytes(
+            Map.of("a",
+                Map.of("b",
+                    Map.of("c", Map.of("d", str))
+                )
+            )
+        );
+        assertThat(valueBytes).isEqualTo(2504L);
     }
 }

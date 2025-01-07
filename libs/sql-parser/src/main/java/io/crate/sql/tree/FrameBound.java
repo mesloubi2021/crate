@@ -21,15 +21,17 @@
 
 package io.crate.sql.tree;
 
-import org.jetbrains.annotations.Nullable;
+import static io.crate.common.collections.Lists.findFirstGTEProbeValue;
+import static io.crate.common.collections.Lists.findFirstLTEProbeValue;
+import static io.crate.common.collections.Lists.findFirstNonPeer;
+import static io.crate.common.collections.Lists.findFirstPreviousPeer;
+import static io.crate.sql.tree.WindowFrame.Mode.ROWS;
+
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
-import static io.crate.common.collections.Lists2.findFirstGTEProbeValue;
-import static io.crate.common.collections.Lists2.findFirstLTEProbeValue;
-import static io.crate.common.collections.Lists2.findFirstNonPeer;
-import static io.crate.common.collections.Lists2.findFirstPreviousPeer;
-import static io.crate.sql.tree.WindowFrame.Mode.ROWS;
+import org.jetbrains.annotations.Nullable;
 
 public class FrameBound extends Node {
 
@@ -275,13 +277,9 @@ public class FrameBound extends Node {
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-
-        FrameBound that = (FrameBound) o;
-
-        if (type != that.type) return false;
-        return value != null ? value.equals(that.value) : that.value == null;
+        return o instanceof FrameBound that
+            && type == that.type
+            && Objects.equals(value, that.value);
     }
 
     @Override

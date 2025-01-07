@@ -21,24 +21,22 @@
 
 package io.crate.analyze;
 
-import io.crate.sql.tree.Expression;
-import io.crate.sql.tree.QualifiedName;
-
-import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
+import io.crate.sql.tree.Expression;
+import io.crate.sql.tree.QualifiedName;
+
+/**
+ * Holds information about a parsed subscript expression
+ */
 public class SubscriptContext {
 
     private QualifiedName qName;
-
-    private Expression expression;
+    private boolean hasExpression;
 
     private final List<String> parts = new ArrayList<>();
-    private Expression index;
-
-    public SubscriptContext() {
-    }
+    private final List<Expression> index = new ArrayList<>();
 
     public QualifiedName qualifiedName() {
         return qName;
@@ -46,32 +44,31 @@ public class SubscriptContext {
 
     public void qualifiedName(QualifiedName qName) {
         this.qName = qName;
+        assert this.hasExpression == false;
     }
 
     public List<String> parts() {
         return parts;
     }
 
-    public void add(String part) {
+    public void addKey(String part) {
         parts.add(0, part);
     }
 
-    public void index(Expression index) {
-        this.index = index;
+    public void addIndex(Expression index) {
+        this.index.add(0, index);
     }
 
-    @Nullable
-    public Expression index() {
+    public List<Expression> index() {
         return index;
     }
 
-    @Nullable
-    public Expression expression() {
-        return expression;
+    public void setHasExpression() {
+        assert this.qName == null;
+        this.hasExpression = true;
     }
 
-    public void expression(Expression expression) {
-        this.expression = expression;
+    public boolean hasExpression() {
+        return this.hasExpression;
     }
-
 }

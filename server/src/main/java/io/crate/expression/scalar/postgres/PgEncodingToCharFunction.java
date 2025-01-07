@@ -21,11 +21,10 @@
 
 package io.crate.expression.scalar.postgres;
 
-import static io.crate.metadata.functions.Signature.scalar;
-
 import io.crate.data.Input;
-import io.crate.expression.scalar.ScalarFunctionModule;
 import io.crate.metadata.FunctionName;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -38,14 +37,14 @@ public class PgEncodingToCharFunction extends Scalar<String, Integer> {
 
     private static final FunctionName FQN = new FunctionName(PgCatalogSchemaInfo.NAME, "pg_encoding_to_char");
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            scalar(
-                FQN,
-                DataTypes.INTEGER.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
-            PgEncodingToCharFunction:: new
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder(FQN, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.INTEGER.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Feature.DETERMINISTIC)
+                .build(),
+            PgEncodingToCharFunction::new
         );
     }
 

@@ -45,7 +45,7 @@ import io.crate.analyze.relations.ParentRelations;
 import io.crate.analyze.relations.RelationAnalyzer;
 import io.crate.analyze.relations.StatementAnalysisContext;
 import io.crate.analyze.relations.select.SelectAnalyzer;
-import io.crate.common.collections.Lists2;
+import io.crate.common.collections.Lists;
 import io.crate.exceptions.ColumnUnknownException;
 import io.crate.expression.eval.EvaluatingNormalizer;
 import io.crate.expression.symbol.InputColumn;
@@ -59,8 +59,8 @@ import io.crate.metadata.Reference;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.RowGranularity;
 import io.crate.metadata.Schemas;
-import io.crate.metadata.doc.DocSysColumns;
 import io.crate.metadata.doc.DocTableInfo;
+import io.crate.metadata.doc.SysColumns;
 import io.crate.metadata.table.Operation;
 import io.crate.sql.tree.Assignment;
 import io.crate.sql.tree.Expression;
@@ -111,7 +111,7 @@ class InsertAnalyzer {
                 throw new IllegalArgumentException("column \"" + columnName + "\" specified more than once");
             }
         }
-        DocTableInfo tableInfo = (DocTableInfo) schemas.resolveTableInfo(
+        DocTableInfo tableInfo = schemas.findRelation(
             insert.table().getName(),
             Operation.INSERT,
             txnCtx.sessionSettings().sessionUser(),
@@ -208,24 +208,22 @@ class InsertAnalyzer {
         }
 
         ExpressionAnalysisContext ctx = new ExpressionAnalysisContext(txnCtx.sessionSettings());
-        List<Symbol> conflictTargets = Lists2.map(constraintColumns, x -> {
+        List<Symbol> conflictTargets = Lists.map(constraintColumns, x -> {
             try {
                 return expressionAnalyzer.convert(x, ctx);
             } catch (ColumnUnknownException e) {
                 // Needed for BWC; to keep supporting `\"o.id\"` style subscript definition
                 // Going through ExpressionAnalyzer again to still have a "column must exist" validation
-                if (x instanceof QualifiedNameReference) {
-                    QualifiedName name = ((QualifiedNameReference) x).getName();
-                    Expression subscriptExpression = MetadataToASTNodeResolver.expressionFromColumn(
-                        ColumnIdent.fromPath(name.toString())
-                    );
+                if (x instanceof QualifiedNameReference qnameRef) {
+                    QualifiedName name = qnameRef.getName();
+                    Expression subscriptExpression = ColumnIdent.fromPath(name.toString()).toExpression();
                     return expressionAnalyzer.convert(subscriptExpression, ctx);
                 }
                 throw e;
             }
         });
         for (Symbol conflictTarget : conflictTargets) {
-            if (!pkColumnIdents.contains(Symbols.pathFromSymbol(conflictTarget))) {
+            if (!pkColumnIdents.contains(conflictTarget.toColumn())) {
                 throw new IllegalArgumentException(
                     String.format(
                         Locale.ENGLISH,
@@ -237,7 +235,7 @@ class InsertAnalyzer {
 
     private static void ensureClusteredByPresentOrNotRequired(List<Reference> targetColumnRefs, DocTableInfo tableInfo) {
         ColumnIdent clusteredBy = tableInfo.clusteredBy();
-        if (clusteredBy == null || clusteredBy.equals(DocSysColumns.ID)) {
+        if (clusteredBy == null || clusteredBy.equals(SysColumns.ID.COLUMN)) {
             return;
         }
         Reference clusteredByRef = tableInfo.getReference(clusteredBy);
@@ -251,12 +249,12 @@ class InsertAnalyzer {
         // and need to rely on later runtime failures
         ColumnIdent clusteredByRoot = clusteredBy.getRoot();
 
-        List<ColumnIdent> targetColumns = Lists2.mapLazy(targetColumnRefs, Reference::column);
+        List<ColumnIdent> targetColumns = Lists.mapLazy(targetColumnRefs, Reference::column);
         if (targetColumns.contains(clusteredByRoot)) {
             return;
         }
         if (clusteredByRef instanceof GeneratedReference generatedClusteredBy) {
-            var topLevelDependencies = Lists2.mapLazy(generatedClusteredBy.referencedReferences(), x -> x.column().getRoot());
+            var topLevelDependencies = Lists.mapLazy(generatedClusteredBy.referencedReferences(), x -> x.column().getRoot());
             if (targetColumns.containsAll(topLevelDependencies)) {
                 return;
             }
@@ -313,8 +311,13 @@ class InsertAnalyzer {
             fieldProvider = new NameFieldProvider(targetTable);
         }
         var expressionAnalyzer = new ExpressionAnalyzer(txnCtx, nodeCtx, paramTypeHints, fieldProvider, null);
-        var normalizer = new EvaluatingNormalizer(nodeCtx, RowGranularity.CLUSTER, null, targetTable);
-        Map<Reference, Symbol> updateAssignments = new HashMap<>(duplicateKeyContext.getAssignments().size());
+        var normalizer = new EvaluatingNormalizer(
+            nodeCtx,
+            RowGranularity.CLUSTER,
+            null,
+            targetTable,
+            f -> f.signature().isDeterministic());
+        Map<Reference, Symbol> updateAssignments = HashMap.newHashMap(duplicateKeyContext.getAssignments().size());
         for (Assignment<Expression> assignment : duplicateKeyContext.getAssignments()) {
             Reference targetCol = (Reference) exprAnalyzer.convert(assignment.columnName(), exprCtx);
             Symbol valueSymbol = ValueNormalizer.normalizeInputForReference(

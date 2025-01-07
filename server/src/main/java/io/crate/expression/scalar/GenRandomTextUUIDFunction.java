@@ -21,9 +21,13 @@
 
 package io.crate.expression.scalar;
 
+import java.util.EnumSet;
+
 import org.elasticsearch.common.UUIDs;
 
 import io.crate.data.Input;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -35,13 +39,14 @@ public final class GenRandomTextUUIDFunction extends Scalar<String, Void> {
 
     private static final String NAME = "gen_random_text_uuid";
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                NAME,
-                DataTypes.STRING.getTypeSignature()
-            ).withFeatures(NO_FEATURES),
-            GenRandomTextUUIDFunction::new
+    public static void register(Functions.Builder module) {
+        module.add(
+                Signature.builder(NAME, FunctionType.SCALAR)
+                        .argumentTypes()
+                        .returnType(DataTypes.STRING.getTypeSignature())
+                        .features(EnumSet.of(Feature.NOTNULL))
+                        .build(),
+                GenRandomTextUUIDFunction::new
         );
     }
 

@@ -29,11 +29,11 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.lucene.document.ShapeField;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.FieldExistsQuery;
-import org.apache.lucene.search.IndexOrDocValuesQuery;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.PointInSetQuery;
@@ -44,6 +44,7 @@ import org.apache.lucene.search.TermInSetQuery;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.spatial.prefix.IntersectsPrefixTreeQuery;
+import org.elasticsearch.Version;
 import org.junit.Test;
 
 import io.crate.analyze.WhereClause;
@@ -58,13 +59,13 @@ import io.crate.lucene.match.CrateRegexQuery;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.doc.DocSchemaInfo;
 import io.crate.metadata.doc.DocTableInfo;
-import io.crate.metadata.functions.Signature;
+import io.crate.role.Role;
+import io.crate.testing.IndexVersionCreated;
+import io.crate.testing.QueryTester;
 import io.crate.testing.SQLExecutor;
 import io.crate.testing.SqlExpressions;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
-import io.crate.types.TypeSignature;
-import io.crate.user.User;
 
 public class CommonQueryBuilderTest extends LuceneQueryBuilderTest {
 
@@ -92,7 +93,7 @@ public class CommonQueryBuilderTest extends LuceneQueryBuilderTest {
 
             TableRelation tableRelation = new TableRelation(tableInfo);
             Map<RelationName, AnalyzedRelation> tableSources = Map.of(tableInfo.ident(), tableRelation);
-            SqlExpressions sqlExpressions = new SqlExpressions(tableSources, tableRelation, User.CRATE_USER);
+            SqlExpressions sqlExpressions = new SqlExpressions(tableSources, tableRelation, Role.CRATE_USER);
 
             Query query = convert(sqlExpressions.normalize(sqlExpressions.asSymbol("x = null")));
 
@@ -137,12 +138,12 @@ public class CommonQueryBuilderTest extends LuceneQueryBuilderTest {
         Query query = convert("x != 10");
         assertThat(query)
             .isExactlyInstanceOf(BooleanQuery.class)
-            .hasToString("+(+*:* -x:[10 TO 10])");
+            .hasToString("+*:* -x:[10 TO 10]");
 
         query = convert("not x = 10");
         assertThat(query)
             .isExactlyInstanceOf(BooleanQuery.class)
-            .hasToString("+(+*:* -x:[10 TO 10])");
+            .hasToString("+*:* -x:[10 TO 10]");
     }
 
     @Test
@@ -313,13 +314,21 @@ public class CommonQueryBuilderTest extends LuceneQueryBuilderTest {
      */
 
     @Test
-    public void testGeoShapeMatchWithDefaultMatchType() throws Exception {
+    public void test_prefix_tree_backed_geo_shape_match_with_default_match_type() throws Exception {
         Query query = convert("match(shape, 'POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))')");
         assertThat(query).isExactlyInstanceOf(IntersectsPrefixTreeQuery.class);
     }
 
     @Test
-    public void testGeoShapeMatchDisJoint() throws Exception {
+    public void test_bkd_tree_backed_geo_shape_match_with_default_match_type() {
+        Query query = convert("match(bkd_shape, 'POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))')");
+        assertThat(query).isExactlyInstanceOf(ConstantScoreQuery.class);
+        Query bkdQuery = ((ConstantScoreQuery) query).getQuery();
+        assertThat(bkdQuery).extracting("queryRelation").isEqualTo(ShapeField.QueryRelation.INTERSECTS);
+    }
+
+    @Test
+    public void test_prefix_tree_backed_geo_shape_match_disjoint() throws Exception {
         Query query = convert("match(shape, 'POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))') using disjoint");
         assertThat(query).isExactlyInstanceOf(ConstantScoreQuery.class);
         Query booleanQuery = ((ConstantScoreQuery) query).getQuery();
@@ -333,21 +342,19 @@ public class CommonQueryBuilderTest extends LuceneQueryBuilderTest {
     }
 
     @Test
+    public void test_bkd_tree_backed_geo_shape_match_disjoint() {
+        Query query = convert("match(bkd_shape, 'POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))') using disjoint");
+        assertThat(query).isExactlyInstanceOf(ConstantScoreQuery.class);
+        Query bkdQuery = ((ConstantScoreQuery) query).getQuery();
+        assertThat(bkdQuery).extracting("queryRelation").isEqualTo(ShapeField.QueryRelation.DISJOINT);
+    }
+
+    @Test
     public void testWhereInIsOptimized() throws Exception {
         Query query = convert("name in ('foo', 'bar')");
         assertThat(query)
             .isExactlyInstanceOf(TermInSetQuery.class)
             .hasToString("name:(bar foo)");
-    }
-
-    @Test
-    public void testIsNullOnObjectArray() throws Exception {
-        Query isNull = convert("o_array IS NULL");
-        assertThat(isNull).hasToString(
-            "(o_array IS NULL)");
-        Query isNotNull = convert("o_array IS NOT NULL");
-        assertThat(isNotNull).hasToString(
-            "(NOT (o_array IS NULL))");
     }
 
     @Test
@@ -586,33 +593,14 @@ public class CommonQueryBuilderTest extends LuceneQueryBuilderTest {
     }
 
     @Test
-    public void test_eq_on_alias_uses_termquery() throws Exception {
+    public void test_function_arguments_are_unaliased() throws Exception {
         // Testing expression: col as alias = 'foo'
         AliasSymbol alias = new AliasSymbol("aliased", createReference("name", DataTypes.STRING));
         var literal = Literal.of("foo");
         var func = new Function(EqOperator.SIGNATURE, List.of(alias, literal), DataTypes.BOOLEAN);
         Query query = queryTester.toQuery(func);
-        assertThat(query).isExactlyInstanceOf(TermQuery.class);
-    }
-
-    @Test
-    public void test_eq_on_alias_inner_func_uses_termquery() throws Exception {
-        // Testing expression: f(col as alias) = 'foo'
-        AliasSymbol alias = new AliasSymbol("aliased", createReference("arr", DataTypes.INTEGER_ARRAY));
-        var innerFunction = new Function(
-            Signature.scalar(
-                "array_length",
-                TypeSignature.parse("array(E)"),
-                DataTypes.INTEGER.getTypeSignature(),
-                DataTypes.INTEGER.getTypeSignature()
-            ),
-            List.of(alias, Literal.of(1)), // 1 is a dummy argument for dimension.
-            DataTypes.INTEGER
-        );
-
-        var func = new Function(EqOperator.SIGNATURE, List.of(innerFunction, Literal.of(5)), DataTypes.BOOLEAN);
-        Query query = queryTester.toQuery(func);
-        assertThat(query).isExactlyInstanceOf(BooleanQuery.class);
+        assertThat(query).isNotExactlyInstanceOf(GenericFunctionQuery.class);
+        assertThat(query.toString()).doesNotContainIgnoringCase("aliased");
     }
 
     @Test
@@ -630,18 +618,6 @@ public class CommonQueryBuilderTest extends LuceneQueryBuilderTest {
     }
 
     @Test
-    public void test_comparison_with_and_without_docvalues() {
-        Query query = convert("x > 10");
-        assertThat(query)
-                .hasToString("x:[11 TO 2147483647]")
-                .isExactlyInstanceOf(IndexOrDocValuesQuery.class);
-        query = convert("x_no_docvalues > 10");
-        assertThat(query)
-                .hasToString("x_no_docvalues:[11 TO 2147483647]")
-                .isNotInstanceOf(IndexOrDocValuesQuery.class);
-    }
-
-    @Test
     public void test_array_not_any_with_and_without_docvalues() {
         Query query = convert("10 != ANY(y_array)");
         assertThat(query)
@@ -649,8 +625,9 @@ public class CommonQueryBuilderTest extends LuceneQueryBuilderTest {
                 .isExactlyInstanceOf(BooleanQuery.class);
         BooleanQuery booleanQuery = (BooleanQuery) query;
         assertThat(booleanQuery.clauses()).satisfiesExactly(
-                x -> assertThat(x.getQuery()).isExactlyInstanceOf(IndexOrDocValuesQuery.class),
-                x -> assertThat(x.getQuery()).isExactlyInstanceOf(IndexOrDocValuesQuery.class)
+            // the query class is anonymous
+            x -> assertThat(x.getQuery().getClass().getName()).endsWith("LongPoint$1"),
+            x -> assertThat(x.getQuery().getClass().getName()).endsWith("LongPoint$1")
         );
 
         query = convert("10 != ANY(x_array_no_docvalues)");
@@ -659,15 +636,23 @@ public class CommonQueryBuilderTest extends LuceneQueryBuilderTest {
                 .isExactlyInstanceOf(BooleanQuery.class);
         booleanQuery = (BooleanQuery) query;
         assertThat(booleanQuery.clauses()).satisfiesExactly(
-                x -> assertThat(x.getQuery()).isNotInstanceOf(IndexOrDocValuesQuery.class),
-                x -> assertThat(x.getQuery()).isNotInstanceOf(IndexOrDocValuesQuery.class)
+            // the query class is anonymous
+            x -> assertThat(x.getQuery().getClass().getName()).doesNotEndWith("LongPoint$1"),
+            x -> assertThat(x.getQuery().getClass().getName()).doesNotEndWith("LongPoint$1")
         );
+    }
+
+    @IndexVersionCreated(value = 8_08_00_99) // V_5_8_0
+    @Test
+    public void test_arr_eq_empty_array_literal_is_optimized_before_V590() {
+        Query query = convert("y_array = []");
+        assertThat(query).hasToString("+NumTermsPerDoc: y_array +(y_array = [])");
     }
 
     @Test
     public void test_arr_eq_empty_array_literal_is_optimized() {
         Query query = convert("y_array = []");
-        assertThat(query).hasToString("+NumTermsPerDoc: y_array +(y_array = [])");
+        assertThat(query).hasToString("_array_length_y_array:[0 TO 0]");
     }
 
     @Test
@@ -686,5 +671,164 @@ public class CommonQueryBuilderTest extends LuceneQueryBuilderTest {
 
         query = convert("name not ilike any(['bar', null, 'foo'])");
         assertThat(query).hasToString("+*:* -(+name:^bar$,flags:66 +name:^foo$,flags:66)");
+    }
+
+    @Test
+    public void test_any_operators_with_empty_array_literal() {
+        Query query = convert("x != any([])");
+        assertThat(query).hasToString("MatchNoDocsQuery(\"Cannot match unless there is at least one non-null candidate\")");
+
+        query = convert("x = any([])");
+        assertThat(query).hasToString("MatchNoDocsQuery(\"Cannot match unless there is at least one non-null candidate\")");
+
+        query = convert("x < any([])");
+        assertThat(query).hasToString("MatchNoDocsQuery(\"Cannot match unless there is at least one non-null candidate\")");
+
+        query = convert("name like any([])");
+        assertThat(query).hasToString("MatchNoDocsQuery(\"Cannot match unless there is at least one non-null candidate\")");
+
+        query = convert("name not ilike any([])");
+        assertThat(query).hasToString("MatchNoDocsQuery(\"Cannot match unless there is at least one non-null candidate\")");
+    }
+
+    @Test
+    public void test_any_operators_with_null_array_literal() {
+        Query query = convert("x != any([null])");
+        assertThat(query).hasToString("MatchNoDocsQuery(\"Cannot match unless there is at least one non-null candidate\")");
+
+        query = convert("x = any([null])");
+        assertThat(query).hasToString("MatchNoDocsQuery(\"Cannot match unless there is at least one non-null candidate\")");
+
+        query = convert("x < any([null])");
+        assertThat(query).hasToString("MatchNoDocsQuery(\"Cannot match unless there is at least one non-null candidate\")");
+
+        query = convert("name like any([null])");
+        assertThat(query).hasToString("MatchNoDocsQuery(\"Cannot match unless there is at least one non-null candidate\")");
+
+        query = convert("name not ilike any([null])");
+        assertThat(query).hasToString("MatchNoDocsQuery(\"Cannot match unless there is at least one non-null candidate\")");
+    }
+
+    @Test
+    public void test_any_neq_operator_maps_column_names_to_oids() throws Exception {
+        final long oid = 123;
+        try (QueryTester tester = new QueryTester.Builder(
+            THREAD_POOL,
+            clusterService,
+            Version.CURRENT,
+            "create table t (a text)",
+            () -> oid
+        ).indexValues("a", "s", "t").build()) {
+            Query query = tester.toQuery("a != any(['s', 't'])");
+            assertThat(query).hasToString(String.format("+(+*:* -(+%s:s +%s:t)) #FieldExistsQuery [field=%s]", oid, oid, oid));
+            assertThat(tester.runQuery("a", "a != any(['s'])")).containsExactly("t");
+        }
+    }
+
+    @Test
+    public void test_eq_object_with_undefined_key() {
+        Query query = convert("obj = {x=1, y=2, z=3}"); // z undefined
+        assertThat(query).hasToString("+obj.x:[1 TO 1] +obj.y:[2 TO 2] #(obj = {\"x\"=1, \"y\"=2, \"z\"=3})");
+    }
+
+    @Test
+    public void test_equality_query_on_double_array_with_index_off_and_no_docvalues_falls_back_to_generic_query() {
+        Query query = convert("d_array_index_off_no_docvalues[1] = 12.34");
+        assertThat(query).isExactlyInstanceOf(GenericFunctionQuery.class);
+
+        query = convert("12.34 != any(d_array_index_off_no_docvalues)");
+        assertThat(query).isExactlyInstanceOf(GenericFunctionQuery.class);
+    }
+
+    @Test
+    public void test_is_not_null_on_not_null_ref() {
+        Query query = convert("x is not null");
+        assertThat(query).isExactlyInstanceOf(MatchAllDocsQuery.class);
+    }
+
+    // tracks a bug: https://github.com/crate/crate/issues/15202
+    @Test
+    public void test_neq_operator_on_nullable_and_not_nullable_args_filters_nulls() throws Exception {
+        final long oid = 123;
+        try (QueryTester tester = new QueryTester.Builder(
+            THREAD_POOL,
+            clusterService,
+            Version.CURRENT,
+            "create table t (a int)",
+            () -> oid
+        ).indexValues("a", new Object[]{1, null, 2}).build()) {
+            Query query = tester.toQuery("a != concat(a, 1)"); // where a is nullable and concat(a, 1) is not null
+            assertThat(query).hasToString(String.format("+(+*:* -(a = concat(a, '1'))) +FieldExistsQuery [field=%s]", oid));
+            assertThat(tester.runQuery("a", "a != a||1")).containsExactly(1, 2);
+        }
+    }
+
+    // tracks a bug : https://github.com/crate/crate/pull/15280#issue-2064743724
+    @Test
+    public void test_neq_operator_on_nullable_and_not_nullable_args_does_not_filter_nulls_from_non_nullable_arg() throws Exception {
+        long[] oid = new long[] {123, 124};
+        int[] oidIdx = new int[]{0};
+        try (QueryTester tester = new QueryTester.Builder(
+            THREAD_POOL,
+            clusterService,
+            Version.CURRENT,
+            "create table t (a int, b int)",
+            () -> oid[oidIdx[0]++]) // oid mapping: a: 123, b: 124
+            .indexValues(List.of("a", "b"), null, null)
+            .indexValues(List.of("a", "b"), null, 2)
+            .indexValues(List.of("a", "b"), 2, null)
+            .indexValues(List.of("a", "b"), 2, 2)
+            .build()) {
+            assertThat(oidIdx[0]).isEqualTo(2);
+            Query query = tester.toQuery("a != concat(b, 1)"); // where a is nullable and concat(b, 1) is not null
+            assertThat(query).hasToString(String.format("+(+*:* -(a = concat(b, '1'))) +FieldExistsQuery [field=%s]", oid[0]));
+            assertThat(tester.runQuery("b", "a != concat(b, 1)")).containsExactlyInAnyOrder(2, null);
+        }
+    }
+
+    // tracks a bug: https://github.com/crate/crate/issues/15232
+    @Test
+    public void test_cannot_use_field_exists_query_on_args_of_coalesce_function() {
+        Query query = convert("coalesce(x, y) <> 0");
+        assertThat(query).hasToString("+(+*:* -(coalesce(x, y) = 0)) #(NOT (coalesce(x, y) = 0))");
+    }
+
+    // tracks a bug : https://github.com/crate/crate/issues/15265
+    @Test
+    public void test_nested_not_operators() {
+        Query query = convert("not (y is not null)");
+        assertThat(query).hasToString("+*:* -FieldExistsQuery [field=y]");
+    }
+
+    @Test
+    public void test_not_operator_on_query_equivalent_to_null() {
+        Query query = convert("(y % null != 1)");
+        assertThat(query).hasToString("+(+*:* -((y % NULL) = 1)) #(NOT ((y % NULL) = 1))");
+    }
+
+    @Test
+    public void test_neq_on_object_literal() {
+        Query query = convert("(obj_no_sub_columns != {})");
+        assertThat(query).hasToString("+(+*:* -(obj_no_sub_columns = {})) #(NOT (obj_no_sub_columns = {}))");
+    }
+
+    @Test
+    public void test_in_operator_with_arrays_on_both_lhs_and_rhs() {
+        Query query = convert("(string_array in (['hello', 'world']))");
+        assertThat(query).hasToString("+string_array:(hello world) #(string_array = ANY([['hello', 'world']]))");
+
+        query = convert("(['hello', 'world'] in (string_array))");
+        assertThat(query).hasToString("(['hello', 'world'] = ANY([string_array]))");
+    }
+
+    @Test
+    public void test_comparisons_between_different_types_do_not_cause_precision_loss() {
+        Query query = convert("byte_col < 128"); // byte to int comparison
+        assertThat(query).isExactlyInstanceOf(GenericFunctionQuery.class);
+        assertThat(query).hasToString("(byte_col < 128)");
+
+        query = convert("f = 0.99999999"); // float to double conparison
+        assertThat(query).isExactlyInstanceOf(GenericFunctionQuery.class);
+        assertThat(query).hasToString("(f = 0.99999999)");
     }
 }

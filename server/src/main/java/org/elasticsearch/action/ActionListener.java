@@ -24,7 +24,6 @@ import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
-import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.common.CheckedConsumer;
 import org.elasticsearch.common.CheckedRunnable;
 
@@ -167,7 +166,7 @@ public interface ActionListener<Response> extends BiConsumer<Response, Throwable
                 }
             }
         }
-        ExceptionsHelper.maybeThrowRuntimeAndSuppress(exceptionList);
+        SQLExceptions.maybeThrowRuntimeAndSuppress(exceptionList);
     }
 
     /**
@@ -183,7 +182,7 @@ public interface ActionListener<Response> extends BiConsumer<Response, Throwable
                 exceptionList.add(ex);
             }
         }
-        ExceptionsHelper.maybeThrowRuntimeAndSuppress(exceptionList);
+        SQLExceptions.maybeThrowRuntimeAndSuppress(exceptionList);
     }
 
     /**
@@ -208,24 +207,6 @@ public interface ActionListener<Response> extends BiConsumer<Response, Throwable
                 } finally {
                     runAfter.run();
                 }
-            }
-        };
-    }
-
-    /**
-     * Wraps a given listener and returns a new listener which makes sure {@link #onResponse(Object)}
-     * and {@link #onFailure(Exception)} of the provided listener will be called at most once.
-     */
-    static <Response> ActionListener<Response> notifyOnce(ActionListener<Response> delegate) {
-        return new NotifyOnceListener<>() {
-            @Override
-            protected void innerOnResponse(Response response) {
-                delegate.onResponse(response);
-            }
-
-            @Override
-            protected void innerOnFailure(Exception e) {
-                delegate.onFailure(e);
             }
         };
     }

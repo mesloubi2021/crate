@@ -43,8 +43,10 @@ import io.crate.expression.symbol.AliasSymbol;
 import io.crate.expression.symbol.FetchStub;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.FunctionType;
 import io.crate.metadata.Reference;
 import io.crate.metadata.RelationName;
+import io.crate.metadata.Scalar;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.metadata.functions.Signature;
 import io.crate.metadata.table.Operation;
@@ -56,9 +58,8 @@ public class FetchRewriteTest extends CrateDummyClusterServiceUnitTest {
 
     @Test
     public void test_fetch_rewrite_on_eval_removes_eval_and_extends_replaced_outputs() throws Exception {
-        SQLExecutor e = SQLExecutor.builder(clusterService)
-            .addTable("create table tbl (x int)")
-            .build();
+        SQLExecutor e = SQLExecutor.of(clusterService)
+            .addTable("create table tbl (x int)");
 
         DocTableInfo tableInfo = e.resolveTableInfo("tbl");
         var x = e.asSymbol("x");
@@ -68,12 +69,12 @@ public class FetchRewriteTest extends CrateDummyClusterServiceUnitTest {
             collect,
             List.of(
                 new Function(
-                    Signature.scalar(
-                        "add",
-                        DataTypes.INTEGER.getTypeSignature(),
-                        DataTypes.INTEGER.getTypeSignature(),
-                        DataTypes.INTEGER.getTypeSignature()
-                    ),
+                    Signature.builder("add", FunctionType.SCALAR)
+                        .argumentTypes(DataTypes.INTEGER.getTypeSignature(),
+                            DataTypes.INTEGER.getTypeSignature())
+                        .returnType(DataTypes.INTEGER.getTypeSignature())
+                        .features(Scalar.Feature.DETERMINISTIC)
+                        .build(),
                     List.of(x, x),
                     DataTypes.INTEGER
                 )
@@ -91,9 +92,8 @@ public class FetchRewriteTest extends CrateDummyClusterServiceUnitTest {
 
     @Test
     public void test_fetchrewrite_on_rename_puts_fetch_marker_into_alias_scope() throws Exception {
-        SQLExecutor e = SQLExecutor.builder(clusterService)
-            .addTable("create table tbl (x int)")
-            .build();
+        SQLExecutor e = SQLExecutor.of(clusterService)
+            .addTable("create table tbl (x int)");
         DocTableInfo tableInfo = e.resolveTableInfo("tbl");
         Reference x = (Reference) e.asSymbol("x");
         var relation = new DocTableRelation(tableInfo);
@@ -128,9 +128,8 @@ public class FetchRewriteTest extends CrateDummyClusterServiceUnitTest {
 
     @Test
     public void test_fetchrewrite_on_eval_with_nested_source_outputs() throws Exception {
-        SQLExecutor e = SQLExecutor.builder(clusterService)
-            .addTable("create table tbl (x int)")
-            .build();
+        SQLExecutor e = SQLExecutor.of(clusterService)
+            .addTable("create table tbl (x int)");
 
         DocTableInfo tableInfo = e.resolveTableInfo("tbl");
         var x = new AliasSymbol("x_alias", e.asSymbol("x"));

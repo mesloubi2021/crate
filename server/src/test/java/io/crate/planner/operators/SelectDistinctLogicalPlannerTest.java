@@ -36,10 +36,9 @@ public class SelectDistinctLogicalPlannerTest extends CrateDummyClusterServiceUn
 
     @Before
     public void createExecutor() throws Exception {
-        e = SQLExecutor.builder(clusterService)
+        e = SQLExecutor.of(clusterService)
             .addTable("CREATE TABLE users (id int, department_id int, name string)")
-            .addTable("CREATE TABLE departments (id int, name string)")
-            .build();
+            .addTable("CREATE TABLE departments (id int, name string)");
     }
 
     @Test
@@ -99,7 +98,7 @@ public class SelectDistinctLogicalPlannerTest extends CrateDummyClusterServiceUn
             """
             GroupHashAggregate[count(id)]
               └ GroupHashAggregate[name | count(id)]
-                └ HashJoin[(department_id = id)]
+                └ HashJoin[INNER | (department_id = id)]
                   ├ Collect[doc.users | [id, department_id] | true]
                   └ Collect[doc.departments | [name, id] | true]
             """
@@ -119,7 +118,7 @@ public class SelectDistinctLogicalPlannerTest extends CrateDummyClusterServiceUn
             """
             OrderBy[name ASC]
               └ GroupHashAggregate[name]
-                └ HashJoin[(department_id = id)]
+                └ HashJoin[INNER | (department_id = id)]
                   ├ Collect[doc.users | [department_id] | true]
                   └ Collect[doc.departments | [name, id] | true]
             """

@@ -21,7 +21,7 @@
 
 package io.crate.execution.engine.window;
 
-import static io.crate.common.collections.Lists2.findFirstNonPeer;
+import static io.crate.common.collections.Lists.findFirstNonPeer;
 
 import java.util.Arrays;
 import java.util.Comparator;
@@ -32,11 +32,14 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
+import java.util.function.LongConsumer;
+import java.util.stream.Collectors;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.common.logging.Loggers;
 import org.jetbrains.annotations.Nullable;
 
+import io.crate.collections.accountable.AccountableList;
 import io.crate.common.collections.Iterables;
 import io.crate.data.BatchIterator;
 import io.crate.data.Buckets;
@@ -72,9 +75,10 @@ import io.crate.execution.engine.sort.Sort;
  */
 public final class WindowFunctionBatchIterator {
 
-    private static final Logger LOGGER = Loggers.getLogger(WindowFunctionBatchIterator.class);
+    private static final Logger LOGGER = LogManager.getLogger(WindowFunctionBatchIterator.class);
 
     public static BatchIterator<Row> of(BatchIterator<Row> source,
+                                        LongConsumer allocateBytes,
                                         RowAccounting<Row> rowAccounting,
                                         ComputeFrameBoundary<Object[]> computeFrameStart,
                                         ComputeFrameBoundary<Object[]> computeFrameEnd,
@@ -86,7 +90,7 @@ public final class WindowFunctionBatchIterator {
                                         List<WindowFunction> windowFunctions,
                                         List<? extends CollectExpression<Row, ?>> argsExpressions,
                                         Boolean[] ignoreNulls,
-                                        Input[]... args) {
+                                        Input<?>[] ... args) {
         assert windowFunctions.size() == args.length : "arguments must be defined for each window function";
         assert args.length == ignoreNulls.length : "ignore-nulls option must be defined for each window function";
         // As optimization we use 1 list that acts both as inputs(source) and as outputs.
@@ -97,9 +101,11 @@ public final class WindowFunctionBatchIterator {
         };
         return CollectingBatchIterator.newInstance(
             source,
-            src -> src.map(materialize).toList()
+            src -> src.map(materialize)
+                .collect(Collectors.toCollection(() -> new AccountableList<>(allocateBytes)))
                 .thenCompose(rows -> sortAndComputeWindowFunctions(
                     rows,
+                    allocateBytes,
                     computeFrameStart,
                     computeFrameEnd,
                     cmpPartitionBy,
@@ -127,6 +133,7 @@ public final class WindowFunctionBatchIterator {
 
     static CompletableFuture<Iterable<Object[]>> sortAndComputeWindowFunctions(
         List<Object[]> rows,
+        LongConsumer allocateBytes,
         ComputeFrameBoundary<Object[]> computeFrameStart,
         ComputeFrameBoundary<Object[]> computeFrameEnd,
         @Nullable Comparator<Object[]> cmpPartitionBy,
@@ -137,10 +144,11 @@ public final class WindowFunctionBatchIterator {
         List<WindowFunction> windowFunctions,
         List<? extends CollectExpression<Row, ?>> argsExpressions,
         Boolean[] ignoreNulls,
-        Input[]... args) {
+        Input<?>[]... args) {
 
         Function<List<Object[]>, Iterable<Object[]>> computeWindowsFn = sortedRows -> computeWindowFunctions(
             sortedRows,
+            allocateBytes,
             computeFrameStart,
             computeFrameEnd,
             cmpPartitionBy,
@@ -161,6 +169,7 @@ public final class WindowFunctionBatchIterator {
     }
 
     private static Iterable<Object[]> computeWindowFunctions(List<Object[]> sortedRows,
+                                                             LongConsumer allocateBytes,
                                                              ComputeFrameBoundary<Object[]> computeFrameStart,
                                                              ComputeFrameBoundary<Object[]> computeFrameEnd,
                                                              @Nullable Comparator<Object[]> cmpPartitionBy,
@@ -168,7 +177,7 @@ public final class WindowFunctionBatchIterator {
                                                              List<WindowFunction> windowFunctions,
                                                              List<? extends CollectExpression<Row, ?>> argsExpressions,
                                                              Boolean[] ignoreNulls,
-                                                             Input[]... args) {
+                                                             Input<?>[]... args) {
         return () -> new Iterator<>() {
 
             private boolean isTraceEnabled = LOGGER.isTraceEnabled();
@@ -201,7 +210,7 @@ public final class WindowFunctionBatchIterator {
                 int wEnd = computeFrameEnd.apply(pStart, pEnd, i, sortedRows);
                 frame.updateBounds(pStart, pEnd, wBegin, wEnd);
                 final Object[] row = computeAndInjectResults(
-                    sortedRows, numCellsInSourceRow, windowFunctions, frame, i, idxInPartition, argsExpressions, ignoreNulls, args);
+                    sortedRows, allocateBytes, numCellsInSourceRow, windowFunctions, frame, i, idxInPartition, argsExpressions, ignoreNulls, args);
 
                 if (isTraceEnabled) {
                     LOGGER.trace(
@@ -228,6 +237,7 @@ public final class WindowFunctionBatchIterator {
     }
 
     private static Object[] computeAndInjectResults(List<Object[]> rows,
+                                                    LongConsumer allocateBytes,
                                                     int numCellsInSourceRow,
                                                     List<WindowFunction> windowFunctions,
                                                     WindowFrameState frame,
@@ -235,11 +245,11 @@ public final class WindowFunctionBatchIterator {
                                                     int idxInPartition,
                                                     List<? extends CollectExpression<Row, ?>> argsExpressions,
                                                     Boolean[] ignoreNulls,
-                                                    Input[]... args) {
+                                                    Input<?>[]... args) {
         Object[] row = rows.get(idx);
         for (int c = 0; c < windowFunctions.size(); c++) {
             WindowFunction windowFunction = windowFunctions.get(c);
-            Object result = windowFunction.execute(idxInPartition, frame, argsExpressions, ignoreNulls[c], args[c]);
+            Object result = windowFunction.execute(allocateBytes, idxInPartition, frame, argsExpressions, ignoreNulls[c], args[c]);
             row[numCellsInSourceRow + c] = result;
         }
         return row;

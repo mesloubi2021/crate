@@ -35,8 +35,8 @@ import java.util.Objects;
 import org.junit.Test;
 
 import io.crate.analyze.relations.AnalyzedRelation;
-import io.crate.common.collections.Lists2;
-import io.crate.expression.symbol.Symbols;
+import io.crate.common.collections.Lists;
+import io.crate.expression.symbol.Symbol;
 import io.crate.metadata.RelationName;
 import io.crate.sql.tree.ColumnDefinition;
 import io.crate.sql.tree.ColumnPolicy;
@@ -49,9 +49,10 @@ import io.crate.types.DataTypes;
 public class SymbolToColumnDefinitionConverterTest extends CrateDummyClusterServiceUnitTest {
 
     private List<ColumnDefinition<Expression>> getAllColumnDefinitionsFrom(String createTableStmt) throws IOException {
-        var e = SQLExecutor.builder(clusterService).addTable(createTableStmt).build();
+        var e = SQLExecutor.of(clusterService)
+            .addTable(createTableStmt);
         AnalyzedRelation analyzedRelation = e.analyze("select * from tbl");
-        return Lists2.map(analyzedRelation.outputs(), Symbols::toColumnDefinition);
+        return Lists.map(analyzedRelation.outputs(), Symbol::toColumnDefinition);
     }
 
     @Test
@@ -148,11 +149,12 @@ public class SymbolToColumnDefinitionConverterTest extends CrateDummyClusterServ
             "       )" +
             "   )" +
             ")";
-        var e = SQLExecutor.builder(clusterService).addTable(createTableStmt).build();
+        var e = SQLExecutor.of(clusterService)
+            .addTable(createTableStmt);
         AnalyzedRelation analyzedRelation = e.analyze(
             "select col_default_object from tbl"
         );
-        var actual = Lists2.map(analyzedRelation.outputs(), Symbols::toColumnDefinition);
+        var actual = Lists.map(analyzedRelation.outputs(), Symbol::toColumnDefinition);
 
         assertThat(actual.get(0))
             .isColumnDefinition(
@@ -222,7 +224,8 @@ public class SymbolToColumnDefinitionConverterTest extends CrateDummyClusterServ
             "       )" +
             "   )" +
             ")";
-        var e = SQLExecutor.builder(clusterService).addTable(createTableStmt).build();
+        var e = SQLExecutor.of(clusterService)
+            .addTable(createTableStmt);
         String selectStmt =
             "select " +
             "   col_default_object['col_nested_integer'], " +
@@ -231,7 +234,7 @@ public class SymbolToColumnDefinitionConverterTest extends CrateDummyClusterServ
             "from tbl";
         var analyzedRelation = e.analyze(selectStmt);
         var actual =
-            Lists2.map(Objects.requireNonNull(analyzedRelation.outputs()), Symbols::toColumnDefinition);
+            Lists.map(Objects.requireNonNull(analyzedRelation.outputs()), Symbol::toColumnDefinition);
 
         assertThat(actual).satisfiesExactlyInAnyOrder(
             c -> assertThat(c).isColumnDefinition(
@@ -321,7 +324,7 @@ public class SymbolToColumnDefinitionConverterTest extends CrateDummyClusterServ
             "   )" +
             ")";
 
-        var e = SQLExecutor.builder(clusterService).addTable(createTableStmt).build();
+        var e = SQLExecutor.of(clusterService).addTable(createTableStmt);
         String selectStmt =
             "select " +
             "   col_default_object['col_nested_integer'] as col1, " +
@@ -330,7 +333,7 @@ public class SymbolToColumnDefinitionConverterTest extends CrateDummyClusterServ
             "from tbl";
         var analyzedRelation = e.analyze(selectStmt);
         var actual =
-            Lists2.map(Objects.requireNonNull(analyzedRelation.outputs()), Symbols::toColumnDefinition);
+            Lists.map(Objects.requireNonNull(analyzedRelation.outputs()), Symbol::toColumnDefinition);
 
         assertThat(actual).satisfiesExactlyInAnyOrder(
             c -> assertThat(c).isColumnDefinition(
@@ -363,11 +366,9 @@ public class SymbolToColumnDefinitionConverterTest extends CrateDummyClusterServ
             "   )" +
             ")";
 
-        var e = SQLExecutor
-            .builder(clusterService)
+        var e = SQLExecutor.of(clusterService)
             .addTable(createTableStmt)
-            .addView(new RelationName("doc", "tbl_view"), "select * from doc.tbl")
-            .build();
+            .addView(new RelationName("doc", "tbl_view"), "select * from doc.tbl");
         String selectStmt =
             "select " +
             "   col_default_object['col_nested_integer'] as col1, " +
@@ -376,7 +377,7 @@ public class SymbolToColumnDefinitionConverterTest extends CrateDummyClusterServ
             "from tbl_view";
         var analyzedRelation = e.analyze(selectStmt);
         var actual =
-            Lists2.map(Objects.requireNonNull(analyzedRelation.outputs()), Symbols::toColumnDefinition);
+            Lists.map(Objects.requireNonNull(analyzedRelation.outputs()), Symbol::toColumnDefinition);
 
         assertThat(actual).satisfiesExactlyInAnyOrder(
             c -> assertThat(c).isColumnDefinition(
@@ -408,7 +409,7 @@ public class SymbolToColumnDefinitionConverterTest extends CrateDummyClusterServ
             "       )" +
             "   )" +
             ")";
-        var e = SQLExecutor.builder(clusterService).addTable(createTableStmt).build();
+        var e = SQLExecutor.of(clusterService).addTable(createTableStmt);
         String selectStmt =
             "select A.col_default_object['col_nested_integer'], " +
             "   A.col_default_object['col_nested_object']['col_nested_timestamp_with_time_zone'], " +
@@ -421,7 +422,7 @@ public class SymbolToColumnDefinitionConverterTest extends CrateDummyClusterServ
             "   from tbl) as A";
         var analyzedRelation = e.analyze(selectStmt);
         var actual =
-            Lists2.map(Objects.requireNonNull(analyzedRelation.outputs()), Symbols::toColumnDefinition);
+            Lists.map(Objects.requireNonNull(analyzedRelation.outputs()), Symbol::toColumnDefinition);
 
         assertThat(actual).satisfiesExactlyInAnyOrder(
             c -> assertThat(c).isColumnDefinition(
@@ -448,13 +449,13 @@ public class SymbolToColumnDefinitionConverterTest extends CrateDummyClusterServ
         String selectStmt =
             "select cast([0,1,5] as array(boolean)) AS active_threads, " +
             "   cast(port['http']as boolean) from sys.nodes limit 1 ";
-        var e = SQLExecutor.builder(clusterService).build();
+        var e = SQLExecutor.of(clusterService);
         var analyzedRelation = e.analyze(selectStmt);
-        var actual = Lists2.map(Objects.requireNonNull(analyzedRelation.outputs()), Symbols::toColumnDefinition);
+        var actual = Lists.map(Objects.requireNonNull(analyzedRelation.outputs()), Symbol::toColumnDefinition);
 
         assertThat(actual).satisfiesExactlyInAnyOrder(
             c -> assertThat(c).isColumnDefinition(
-                "cast(port['http'] AS boolean)",
+                "cast(port['http'] AS BOOLEAN)",
                 isColumnType(DataTypes.BOOLEAN.getName())),
             c -> assertThat(c).isColumnDefinition(
                 "active_threads",

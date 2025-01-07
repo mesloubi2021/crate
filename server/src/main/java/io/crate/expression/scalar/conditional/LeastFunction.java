@@ -23,7 +23,8 @@ package io.crate.expression.scalar.conditional;
 
 import static io.crate.metadata.functions.TypeVariableConstraint.typeVariable;
 
-import io.crate.expression.scalar.ScalarFunctionModule;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.functions.BoundSignature;
 import io.crate.metadata.functions.Signature;
 import io.crate.types.DataType;
@@ -33,15 +34,15 @@ public class LeastFunction extends ConditionalCompareFunction {
 
     private static final String NAME = "least";
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature
-                .scalar(
-                    NAME,
-                    TypeSignature.parse("E"),
-                    TypeSignature.parse("E"))
-                .withVariableArity()
-                .withTypeVariableConstraints(typeVariable("E")),
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(TypeSignature.parse("E"))
+                .returnType(TypeSignature.parse("E"))
+                .features(Feature.DETERMINISTIC)
+                .setVariableArity(true)
+                .typeVariableConstraints(typeVariable("E"))
+                .build(),
             LeastFunction::new
         );
     }

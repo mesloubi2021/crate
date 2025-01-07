@@ -21,13 +21,14 @@
 
 package io.crate.expression.scalar;
 
-import static io.crate.expression.scalar.array.ArrayArgumentValidators.ensureBothInnerTypesAreNotUndefined;
 import static io.crate.metadata.functions.TypeVariableConstraint.typeVariable;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import io.crate.data.Input;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -37,26 +38,25 @@ import io.crate.types.ArrayType;
 import io.crate.types.DataType;
 import io.crate.types.TypeSignature;
 
-class ArrayCatFunction extends Scalar<List<Object>, List<Object>> {
+public class ArrayCatFunction extends Scalar<List<Object>, List<Object>> {
 
     public static final String NAME = "array_cat";
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                NAME,
-                TypeSignature.parse("array(E)"),
-                TypeSignature.parse("array(E)"),
-                TypeSignature.parse("array(E)")
-            )
-                .withTypeVariableConstraints(typeVariable("E")),
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(TypeSignature.parse("array(E)"),
+                    TypeSignature.parse("array(E)"))
+                .returnType(TypeSignature.parse("array(E)"))
+                .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+                .typeVariableConstraints(typeVariable("E"))
+                .build(),
             ArrayCatFunction::new
         );
     }
 
     ArrayCatFunction(Signature signature, BoundSignature boundSignature) {
         super(signature, boundSignature);
-        ensureBothInnerTypesAreNotUndefined(boundSignature.argTypes(), signature.getName().name());
     }
 
     @SafeVarargs
@@ -64,14 +64,20 @@ class ArrayCatFunction extends Scalar<List<Object>, List<Object>> {
     public final List<Object> evaluate(TransactionContext txnCtx, NodeContext nodeCtx, Input<List<Object>>... args) {
         DataType<?> innerType = ((ArrayType<?>) this.boundSignature.returnType()).innerType();
         ArrayList<Object> resultList = new ArrayList<>();
+
+        int nullCnt = 0;
         for (Input<List<Object>> arg : args) {
             List<Object> values = arg.value();
             if (values == null) {
+                nullCnt++;
                 continue;
             }
             for (Object value : values) {
                 resultList.add(innerType.sanitizeValue(value));
             }
+        }
+        if (nullCnt == args.length) {
+            return null;
         }
         return resultList;
     }

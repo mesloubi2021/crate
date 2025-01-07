@@ -29,6 +29,8 @@ import java.util.StringJoiner;
 
 import io.crate.data.Input;
 import io.crate.metadata.FunctionName;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -42,24 +44,26 @@ class ArrayToStringFunction extends Scalar<String, Object> {
 
     private static final FunctionName FQN = new FunctionName(PgCatalogSchemaInfo.NAME, "array_to_string");
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                FQN,
-                TypeSignature.parse("array(E)"),
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ).withTypeVariableConstraints(typeVariable("E")),
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder(FQN, FunctionType.SCALAR)
+                .argumentTypes(TypeSignature.parse("array(E)"),
+                    DataTypes.STRING.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .typeVariableConstraints(typeVariable("E"))
+                .features(Feature.DETERMINISTIC, Feature.STRICTNULL)
+                .build(),
             ArrayToStringFunction::new
         );
-        module.register(
-            Signature.scalar(
-                FQN,
-                TypeSignature.parse("array(E)"),
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ).withTypeVariableConstraints(typeVariable("E")),
+        module.add(
+            Signature.builder(FQN, FunctionType.SCALAR)
+                .argumentTypes(TypeSignature.parse("array(E)"),
+                    DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .typeVariableConstraints(typeVariable("E"))
+                .features(Feature.DETERMINISTIC, Feature.STRICTNULL)
+                .build(),
             ArrayToStringFunction::new
         );
     }

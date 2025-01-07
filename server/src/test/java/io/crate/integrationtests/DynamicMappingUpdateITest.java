@@ -22,33 +22,27 @@
 package io.crate.integrationtests;
 
 import static io.crate.testing.Asserts.assertThat;
-import static io.crate.testing.TestingHelpers.printedTable;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
-import io.crate.testing.UseNewCluster;
-import org.elasticsearch.common.xcontent.json.JsonXContent;
 import org.elasticsearch.test.IntegTestCase;
-import org.jetbrains.annotations.Nullable;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import io.crate.common.collections.Maps;
-import io.crate.server.xcontent.XContentHelper;
+import io.crate.metadata.Reference;
+import io.crate.metadata.doc.DocTableInfo;
+import io.crate.testing.UseNewCluster;
 import io.crate.testing.UseRandomizedSchema;
-import io.crate.types.ArrayType;
-import io.crate.types.DataTypes;
-import io.crate.types.ObjectType;
 
 
 @UseRandomizedSchema(random = false)
@@ -71,7 +65,6 @@ public class DynamicMappingUpdateITest extends IntegTestCase {
         execute_concurrent_statements_that_add_columns_result_in_dynamic_mapping_updates();
     }
 
-    @SuppressWarnings("unchecked")
     private void execute_concurrent_statements_that_add_columns_result_in_dynamic_mapping_updates() throws InterruptedException, IOException {
         // update, insert, alter take slightly different paths to update mappings
         execute("""
@@ -230,18 +223,21 @@ public class DynamicMappingUpdateITest extends IntegTestCase {
             .isEmpty();
 
         execute("select column_name, ordinal_position from information_schema.columns where table_name = 't' order by ordinal_position limit 3");
-        assertThat(printedTable(response.rows())).isEqualTo(
-            """
-            a| 1
-            b| 2
-            b['x']| 3
-            """);
+        assertThat(response).hasRows(
+            "a| 1",
+            "b| 2",
+            "b['x']| 3");
 
-        Map<String, Object> mapping = XContentHelper.convertToMap(JsonXContent.JSON_XCONTENT, getIndexMapping("t"), false);
-        Set<Long> oids = new HashSet<>();
-        collectOID((Map<String, Map<String, Object>>) Maps.getByPath(mapping, "default.properties"), oids);
-        assertThat(oids.size()).isEqualTo(48);
-        assertThat(oids.stream().max(Long::compareTo).get()).isEqualTo(48);
+        DocTableInfo table = getTable("t");
+        Iterable<Reference> allUserColumns = () -> StreamSupport.stream(table.spliterator(), false)
+            .filter(x -> !x.column().isSystemColumn())
+            .iterator();
+        assertThat(allUserColumns).hasSize(48);
+        assertThat(
+            StreamSupport.stream(allUserColumns.spliterator(), false)
+            .mapToLong(Reference::oid)
+            .max()
+        ).hasValue(48);
     }
 
     @Test
@@ -264,18 +260,16 @@ public class DynamicMappingUpdateITest extends IntegTestCase {
         execute("update t set o = {q={r={s=1}}}");
 
         execute("select column_name, ordinal_position from information_schema.columns where table_name = 't'");
-        assertThat(printedTable(response.rows())).isEqualTo(
-            """
-            id| 1
-            name| 2
-            o| 3
-            o['a']| 4
-            o['a']['b']| 5
-            o['b']| 6
-            o['q']| 7
-            o['q']['r']| 8
-            o['q']['r']['s']| 9
-            """);
+        assertThat(response).hasRows(
+            "id| 1",
+            "name| 2",
+            "o| 3",
+            "o['a']| 4",
+            "o['a']['b']| 5",
+            "o['b']| 6",
+            "o['q']| 7",
+            "o['q']['r']| 8",
+            "o['q']['r']['s']| 9");
     }
 
     @Test
@@ -296,18 +290,16 @@ public class DynamicMappingUpdateITest extends IntegTestCase {
         execute("alter table t add column o['q']['r']['s'] int");
 
         execute("select column_name, ordinal_position from information_schema.columns where table_name = 't'");
-        assertThat(printedTable(response.rows())).isEqualTo(
-            """
-            id| 1
-            name| 2
-            o| 3
-            o['a']| 4
-            o['a']['b']| 5
-            o['b']| 6
-            o['q']| 7
-            o['q']['r']| 8
-            o['q']['r']['s']| 9
-            """);
+        assertThat(response).hasRows(
+            "id| 1",
+            "name| 2",
+            "o| 3",
+            "o['a']| 4",
+            "o['a']['b']| 5",
+            "o['b']| 6",
+            "o['q']| 7",
+            "o['q']['r']| 8",
+            "o['q']['r']['s']| 9");
     }
 
     @Test
@@ -392,7 +384,7 @@ public class DynamicMappingUpdateITest extends IntegTestCase {
             );
         File file = folder.newFile(UUID.randomUUID().toString());
         Files.write(file.toPath(), lines, StandardCharsets.UTF_8);
-        execute("copy t from ? return summary", new Object[]{Paths.get(file.toURI()).toUri().toString()});
+        execute("copy t from ?", new Object[]{Paths.get(file.toURI()).toUri().toString()});
 
         lines = List.of(
             """
@@ -404,51 +396,70 @@ public class DynamicMappingUpdateITest extends IntegTestCase {
         );
         file = folder.newFile(UUID.randomUUID().toString());
         Files.write(file.toPath(), lines, StandardCharsets.UTF_8);
-        execute("copy t from ? return summary", new Object[]{Paths.get(file.toURI()).toUri().toString()});
+        execute("copy t from ?", new Object[]{Paths.get(file.toURI()).toUri().toString()});
         execute("refresh table t");
 
         execute("select column_name, ordinal_position from information_schema.columns where table_name='t' order by ordinal_position");
-        assertThat(printedTable(response.rows())).isEqualTo(
-            """
-            tb| 1
-            p| 2
-            tb['t1']| 3
-            tb['t1']['t3']| 4
-            tb['t1']['t3']['t4']| 5
-            tb['t1']['t3']['t4']['t5']| 6
-            tb['t1']['t6']| 7
-            tb['t2']| 8
-            o| 9
-            o['a']| 10
-            o['a']['b']| 11
-            o['b']| 12
-            """);
+        assertThat(response).hasRows(
+            "tb| 1",
+            "p| 2",
+            "tb['t1']| 3",
+            "tb['t1']['t3']| 4",
+            "tb['t1']['t3']['t4']| 5",
+            "tb['t1']['t3']['t4']['t5']| 6",
+            "tb['t1']['t6']| 7",
+            "tb['t2']| 8",
+            "o| 9",
+            "o['a']| 10",
+            "o['a']['b']| 11",
+            "o['b']| 12");
     }
 
-    private static void collectOID(@Nullable Map<String, Map<String, Object>> propertiesMap, Set<Long> oids) {
-        if (propertiesMap != null) {
-            for (Map<String, Object> colProps: propertiesMap.values()) {
-                String type = (String) colProps.get("type"); // Can be null
+    @Test
+    public void test_nested_arrays_throw_exception() throws IOException {
 
-                if (ArrayType.NAME.equals(type)) {
-                    Map<String, Object> inner = Maps.get(colProps, "inner");
-                    Number oid = Maps.get(inner, "oid");
-                    assertThat(oid).isNotNull();
-                    oids.add(oid.longValue());
+        execute(
+            """
+                create table t (
+                    tb array(object(dynamic)),
+                    p int
+                ) with (column_policy = 'dynamic');
+                """
+        );
 
-                    String innerType = (String) inner.get("type");
-                    if (ObjectType.UNTYPED.equals(DataTypes.ofMappingName(innerType))) {
-                        collectOID(Maps.get(inner, "properties"), oids);
-                    }
-                } else {
-                    Number oid = Maps.get(colProps, "oid");
-                    assertThat(oid).isNotNull();
-                    oids.add(oid.longValue());
-                    if (type == null || ObjectType.UNTYPED.equals(DataTypes.ofMappingName(type))) {
-                        collectOID(Maps.get(colProps,"properties"), oids);
-                    }
-                }
-            }
-        }
+        // We don't support dynamically creating nested arrays under objects
+        assertThatThrownBy(
+            () -> execute("insert into t (tb) values ([{t1 = [[1, 2], [3, 4]]},{t2 = {}}])")
+        ).hasMessageContaining("Dynamic nested arrays are not supported");
+
+        // We don't support dynamically creating nested arrays as top-level columns
+        assertThatThrownBy(
+            () -> execute("insert into t (n) values ([[1, 2], [3, 4]])")
+        ).hasMessageContaining("Dynamic nested arrays are not supported");
+    }
+
+    @Test
+    public void test_conflicting_object_updates_do_not_allow_inserting_incompatible_values() throws Exception {
+        execute("""
+            CREATE TABLE exp1 (id TEXT PRIMARY KEY, doc OBJECT(dynamic))
+            """);
+        execute(
+            """
+            INSERT INTO exp1 (id, doc)
+            VALUES
+                ('4', {"name" = [{ "a" = 1 }]}),
+                ('1', {"name" = { "a" = 1 }}),
+                ('2', {"name" = { "a" = 2 }}),
+                ('3', {"name" = { "a" = null }})
+            ;
+              """
+        );
+        execute("REFRESH TABLE exp1");
+        execute("SELECT id FROM exp1 order by id");
+        List<Integer> ids = Stream.of(response.rows()).map(row -> Integer.parseInt(row[0].toString())).toList();
+        assertThat(ids).satisfiesAnyOf(
+            xs -> assertThat(xs).isEqualTo(List.of(1, 2, 3)),
+            xs -> assertThat(xs).isEqualTo(List.of(4))
+        );
     }
 }

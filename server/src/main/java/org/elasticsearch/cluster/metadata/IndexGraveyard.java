@@ -19,6 +19,14 @@
 
 package org.elasticsearch.cluster.metadata;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Objects;
+
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.Diff;
 import org.elasticsearch.cluster.NamedDiff;
@@ -31,18 +39,8 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.ContextParser;
 import org.elasticsearch.common.xcontent.ObjectParser;
 import org.elasticsearch.common.xcontent.ParseField;
-import org.elasticsearch.common.xcontent.ToXContentObject;
-import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.Index;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.EnumSet;
-import java.util.List;
-import java.util.Objects;
 
 /**
  * A collection of tombstones for explicitly marking indices as deleted in the cluster state.
@@ -130,15 +128,6 @@ public final class IndexGraveyard implements Metadata.Custom {
         return false;
     }
 
-    @Override
-    public XContentBuilder toXContent(final XContentBuilder builder, final Params params) throws IOException {
-        builder.startArray(TOMBSTONES_FIELD.getPreferredName());
-        for (Tombstone tombstone : tombstones) {
-            tombstone.toXContent(builder, params);
-        }
-        return builder.endArray();
-    }
-
     public static IndexGraveyard fromXContent(final XContentParser parser) throws IOException {
         return new IndexGraveyard(GRAVEYARD_PARSER.parse(parser, null));
     }
@@ -154,7 +143,6 @@ public final class IndexGraveyard implements Metadata.Custom {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public Diff<Metadata.Custom> diff(final Metadata.Custom previous) {
         return new IndexGraveyardDiff((IndexGraveyard) previous, this);
     }
@@ -314,7 +302,7 @@ public final class IndexGraveyard implements Metadata.Custom {
 
         @Override
         public IndexGraveyard apply(final Metadata.Custom previous) {
-            @SuppressWarnings("unchecked") final IndexGraveyard old = (IndexGraveyard) previous;
+            final IndexGraveyard old = (IndexGraveyard) previous;
             if (removedCount > old.tombstones.size()) {
                 throw new IllegalStateException("IndexGraveyardDiff cannot remove [" + removedCount + "] entries from [" +
                                                 old.tombstones.size() + "] tombstones.");
@@ -345,7 +333,7 @@ public final class IndexGraveyard implements Metadata.Custom {
     /**
      * An individual tombstone entry for representing a deleted index.
      */
-    public static final class Tombstone implements ToXContentObject, Writeable {
+    public static final class Tombstone implements Writeable {
 
         private static final String INDEX_KEY = "index";
         private static final String DELETE_DATE_IN_MILLIS_KEY = "delete_date_in_millis";
@@ -410,7 +398,7 @@ public final class IndexGraveyard implements Metadata.Custom {
             if (other == null || getClass() != other.getClass()) {
                 return false;
             }
-            @SuppressWarnings("unchecked") Tombstone that = (Tombstone) other;
+            Tombstone that = (Tombstone) other;
             return index.equals(that.index) && deleteDateInMillis == that.deleteDateInMillis;
         }
 
@@ -424,15 +412,6 @@ public final class IndexGraveyard implements Metadata.Custom {
         @Override
         public String toString() {
             return "[index=" + index + ", deleteDate=" + Joda.getStrictStandardDateFormatter().printer().print(deleteDateInMillis) + "]";
-        }
-
-        @Override
-        public XContentBuilder toXContent(final XContentBuilder builder, final Params params) throws IOException {
-            builder.startObject();
-            builder.field(INDEX_KEY);
-            index.toXContent(builder, params);
-            builder.timeField(DELETE_DATE_IN_MILLIS_KEY, DELETE_DATE_KEY, deleteDateInMillis);
-            return builder.endObject();
         }
 
         public static Tombstone fromXContent(final XContentParser parser) throws IOException {

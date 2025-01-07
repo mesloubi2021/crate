@@ -28,12 +28,15 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.function.BinaryOperator;
 
+import org.elasticsearch.common.settings.Settings;
 import org.joda.time.Period;
 
 import io.crate.data.Input;
 import io.crate.data.Row;
 import io.crate.legacy.LegacySettings;
 import io.crate.metadata.FunctionName;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.TransactionContext;
 import io.crate.metadata.functions.BoundSignature;
@@ -60,18 +63,18 @@ public final class GenerateSeries<T extends Number> extends TableFunctionImpleme
 
     public static final FunctionName NAME = new FunctionName(PgCatalogSchemaInfo.NAME, "generate_series");
 
-    public static void register(TableFunctionModule module) {
+    public static void register(Functions.Builder builder, Settings settings) {
         final List<String> fieldNames =
-            LegacySettings.LEGACY_TABLE_FUNCTION_COLUMN_NAMING.get(module.settings()) ? List.of() : List.of(NAME.name());
+            LegacySettings.LEGACY_TABLE_FUNCTION_COLUMN_NAMING.get(settings) ? List.of() : List.of(NAME.name());
 
         // without step
-        module.register(
-            Signature.table(
-                NAME,
-                DataTypes.LONG.getTypeSignature(),
-                DataTypes.LONG.getTypeSignature(),
-                DataTypes.LONG.getTypeSignature()
-            ),
+        builder.add(
+            Signature.builder(NAME, FunctionType.TABLE)
+                .argumentTypes(DataTypes.LONG.getTypeSignature(),
+                    DataTypes.LONG.getTypeSignature())
+                .returnType(DataTypes.LONG.getTypeSignature())
+                .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+                .build(),
             (signature, boundSignature) -> new GenerateSeries<>(
                 signature,
                 boundSignature,
@@ -82,13 +85,13 @@ public final class GenerateSeries<T extends Number> extends TableFunctionImpleme
                 Long::compare,
                 new RowType(List.of(boundSignature.argTypes().get(0)), fieldNames))
         );
-        module.register(
-            Signature.table(
-                NAME,
-                DataTypes.INTEGER.getTypeSignature(),
-                DataTypes.INTEGER.getTypeSignature(),
-                DataTypes.INTEGER.getTypeSignature()
-            ),
+        builder.add(
+            Signature.builder(NAME, FunctionType.TABLE)
+                .argumentTypes(DataTypes.INTEGER.getTypeSignature(),
+                    DataTypes.INTEGER.getTypeSignature())
+                .returnType(DataTypes.INTEGER.getTypeSignature())
+                .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+                .build(),
             (signature, boundSignature) -> new GenerateSeries<>(
                 signature,
                 boundSignature,
@@ -101,14 +104,14 @@ public final class GenerateSeries<T extends Number> extends TableFunctionImpleme
         );
 
         // with step
-        module.register(
-            Signature.table(
-                NAME,
-                DataTypes.LONG.getTypeSignature(),
-                DataTypes.LONG.getTypeSignature(),
-                DataTypes.LONG.getTypeSignature(),
-                DataTypes.LONG.getTypeSignature()
-            ),
+        builder.add(
+            Signature.builder(NAME, FunctionType.TABLE)
+                .argumentTypes(DataTypes.LONG.getTypeSignature(),
+                    DataTypes.LONG.getTypeSignature(),
+                    DataTypes.LONG.getTypeSignature())
+                .returnType(DataTypes.LONG.getTypeSignature())
+                .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+                .build(),
             (signature, boundSignature) -> new GenerateSeries<>(
                 signature,
                 boundSignature,
@@ -119,14 +122,14 @@ public final class GenerateSeries<T extends Number> extends TableFunctionImpleme
                 Long::compare,
                 new RowType(List.of(boundSignature.argTypes().get(0)), fieldNames))
         );
-        module.register(
-            Signature.table(
-                NAME,
-                DataTypes.INTEGER.getTypeSignature(),
-                DataTypes.INTEGER.getTypeSignature(),
-                DataTypes.INTEGER.getTypeSignature(),
-                DataTypes.INTEGER.getTypeSignature()
-            ),
+        builder.add(
+            Signature.builder(NAME, FunctionType.TABLE)
+                .argumentTypes(DataTypes.INTEGER.getTypeSignature(),
+                    DataTypes.INTEGER.getTypeSignature(),
+                    DataTypes.INTEGER.getTypeSignature())
+                .returnType(DataTypes.INTEGER.getTypeSignature())
+                .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+                .build(),
             (signature, boundSignature) -> new GenerateSeries<>(
                 signature,
                 boundSignature,
@@ -140,31 +143,31 @@ public final class GenerateSeries<T extends Number> extends TableFunctionImpleme
 
         // generate_series(ts, ts, interval)
         for (var supportedType : List.of(DataTypes.TIMESTAMP, DataTypes.TIMESTAMPZ)) {
-            module.register(
-                Signature.table(
-                    NAME,
-                    supportedType.getTypeSignature(),
-                    supportedType.getTypeSignature(),
-                    DataTypes.INTERVAL.getTypeSignature(),
-                    supportedType.getTypeSignature()
-                ),
+            builder.add(
+                Signature.builder(NAME, FunctionType.TABLE)
+                    .argumentTypes(supportedType.getTypeSignature(),
+                        supportedType.getTypeSignature(),
+                        DataTypes.INTERVAL.getTypeSignature())
+                    .returnType(supportedType.getTypeSignature())
+                    .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+                    .build(),
                 (signature, boundSignature) -> new GenerateSeriesIntervals(
                     signature,
                     boundSignature,
                     new RowType(List.of(boundSignature.argTypes().get(0)), fieldNames))
             );
-            module.register(
-                Signature.table(
-                    NAME,
-                    supportedType.getTypeSignature(),
-                    supportedType.getTypeSignature(),
-                    supportedType.getTypeSignature()
-                ),
+            builder.add(
+                Signature.builder(NAME, FunctionType.TABLE)
+                    .argumentTypes(supportedType.getTypeSignature(),
+                        supportedType.getTypeSignature())
+                    .returnType(supportedType.getTypeSignature())
+                    .features(Feature.DETERMINISTIC)
+                    .build(),
                 (signature, boundSignature) -> {
                     throw new IllegalArgumentException(
                         "generate_series(start, stop) has type `" + boundSignature.argTypes().get(0).getName() +
-                        "` for start, but requires long/int values for start and stop, " +
-                        "or if used with timestamps, it requires a third argument for the step (interval)");
+                            "` for start, but requires long/int values for start and stop, " +
+                            "or if used with timestamps, it requires a third argument for the step (interval)");
                 }
             );
         }

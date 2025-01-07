@@ -45,13 +45,13 @@ import io.crate.planner.operators.SubQueryResults;
 
 public record AnalyzedAlterTableAddColumn(
         DocTableInfo table,
-        /**
+        /*
          * In order of definition
          */
         Map<ColumnIdent, RefBuilder> columns,
-        /**
+        /*
          * By constraint name; In order of definition
-         **/
+         */
         Map<String, AnalyzedCheck> checks) implements DDLStatement {
 
     @Override
@@ -75,6 +75,9 @@ public record AnalyzedAlterTableAddColumn(
             Reference reference = refBuilder.build(columns, table.ident(), bindParameter, toValue);
             if (refBuilder.isPrimaryKey()) {
                 primaryKeys.add(reference);
+                if (refBuilder.pkConstraintName() != null) {
+                    throw new IllegalArgumentException("Cannot alter the name of PRIMARY KEY constraint");
+                }
             }
             newColumns.add(reference);
         }

@@ -67,8 +67,8 @@ import com.carrotsearch.hppc.procedures.ObjectProcedure;
 
 import io.crate.Streamer;
 import io.crate.breaker.ConcurrentRamAccounting;
-import io.crate.breaker.RowAccountingWithEstimators;
-import io.crate.breaker.RowCellsAccountingWithEstimators;
+import io.crate.breaker.TypedCellsAccounting;
+import io.crate.breaker.TypedRowAccounting;
 import io.crate.data.Paging;
 import io.crate.data.Row;
 import io.crate.data.RowConsumer;
@@ -120,10 +120,9 @@ import io.crate.metadata.Routing;
 import io.crate.metadata.Schemas;
 import io.crate.metadata.TransactionContext;
 import io.crate.metadata.settings.SessionSettings;
-import io.crate.metadata.table.Operation;
 import io.crate.planner.distribution.DistributionType;
-import io.crate.planner.node.StreamerVisitor;
 import io.crate.planner.operators.PKAndVersion;
+import io.crate.sql.tree.JoinType;
 import io.crate.types.DataTypes;
 
 @Singleton
@@ -147,7 +146,6 @@ public class JobSetup {
 
     @Inject
     public JobSetup(Settings settings,
-                    Schemas schemas,
                     MapSideDataCollectOperation collectOperation,
                     ClusterService clusterService,
                     NodeLimits nodeJobsCounter,
@@ -162,7 +160,7 @@ public class JobSetup {
                     ShardCollectSource shardCollectSource,
                     MemoryManagerFactory memoryManagerFactory) {
         this.nodeName = Node.NODE_NAME_SETTING.get(settings);
-        this.schemas = schemas;
+        this.schemas = nodeCtx.schemas();
         this.collectOperation = collectOperation;
         this.clusterService = clusterService;
         this.circuitBreakerService = circuitBreakerService;
@@ -176,7 +174,6 @@ public class JobSetup {
         EvaluatingNormalizer normalizer = EvaluatingNormalizer.functionOnlyNormalizer(nodeCtx);
         this.projectorFactory = new ProjectionToProjectorVisitor(
             clusterService,
-            schemas,
             nodeJobsCounter,
             circuitBreakerService,
             nodeCtx,
@@ -292,7 +289,7 @@ public class JobSetup {
                 var ramAccounting = new BlockBasedRamAccounting(
                     b -> breaker.addEstimateBytesAndMaybeBreak(b, executionPhase.label()),
                     ramAccountingBlockSizeInBytes);
-                Streamer<?>[] streamers = StreamerVisitor.streamersFromOutputs(executionPhase);
+                Streamer<?>[] streamers = executionPhase.getStreamers();
                 SingleBucketBuilder bucketBuilder = new SingleBucketBuilder(streamers, ramAccounting);
                 context.directResponseFutures.add(bucketBuilder.completionFuture().whenComplete((res, err) -> ramAccounting.close()));
                 context.registerBatchConsumer(nodeOperation.downstreamExecutionPhaseId(), bucketBuilder);
@@ -732,7 +729,7 @@ public class JobSetup {
                         phase.inputTypes(),
                         projectingRowConsumer.requiresScroll(),
                         phase.orderByPositions(),
-                        () -> new RowAccountingWithEstimators(
+                        () -> new TypedRowAccounting(
                             phase.inputTypes(),
                             new BlockBasedRamAccounting(ramAccounting::addBytes, ramAccountingBlockSizeInBytes))),
                     phase.numUpstreams());
@@ -833,7 +830,7 @@ public class JobSetup {
                 localNodeId,
                 context.sharedShardContexts,
                 clusterService.state().metadata(),
-                relationName -> schemas.getTableInfo(relationName, Operation.READ),
+                relationName -> schemas.getTableInfo(relationName),
                 routings));
             return null;
         }
@@ -937,7 +934,6 @@ public class JobSetup {
                 projectorFactory
             );
             Predicate<Row> joinCondition = RowFilter.create(context.transactionContext, inputFactory, phase.joinCondition());
-
             HashJoinOperation joinOperation = new HashJoinOperation(
                 phase.numLeftOutputs(),
                 phase.numRightOutputs(),
@@ -949,12 +945,13 @@ public class JobSetup {
                 //    96 bytes for each ArrayList +
                 //    7 bytes per key for the IntHashObjectHashMap  (should be 4 but the map pre-allocates more)
                 //    7 bytes perv value (pointer from the map to the list) (should be 4 but the map pre-allocates more)
-                new RowCellsAccountingWithEstimators(phase.leftOutputTypes(), ramAccountingOfOperation, 110),
+                new TypedCellsAccounting(phase.leftOutputTypes(), ramAccountingOfOperation, 110),
                 context.transactionContext,
                 inputFactory,
                 breaker(),
                 phase.estimatedRowSizeForLeft(),
-                phase.numberOfRowsForLeft());
+                phase.joinType() == JoinType.LEFT
+            );
             DistResultRXTask left = pageDownstreamContextForNestedLoop(
                 phase.phaseId(),
                 context,
@@ -1019,14 +1016,14 @@ public class JobSetup {
                 nodeName,
                 mergePhase.phaseId(),
                 searchTp,
-                StreamerVisitor.streamersFromOutputs(mergePhase),
+                mergePhase.getStreamers(),
                 rowConsumer,
                 PagingIterator.create(
                     mergePhase.numUpstreams(),
                     mergePhase.inputTypes(),
                     rowConsumer.requiresScroll(),
                     mergePhase.orderByPositions(),
-                    () -> new RowAccountingWithEstimators(
+                    () -> new TypedRowAccounting(
                         mergePhase.inputTypes(),
                         ramAccounting)),
                 mergePhase.numUpstreams());

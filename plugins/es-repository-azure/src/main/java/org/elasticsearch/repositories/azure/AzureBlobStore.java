@@ -39,7 +39,7 @@ import org.elasticsearch.repositories.azure.AzureRepository.Repository;
 import com.microsoft.azure.storage.LocationMode;
 import com.microsoft.azure.storage.StorageException;
 
-import io.crate.common.annotations.VisibleForTesting;
+import org.jetbrains.annotations.VisibleForTesting;
 
 public class AzureBlobStore implements BlobStore {
 
@@ -56,12 +56,8 @@ public class AzureBlobStore implements BlobStore {
     AzureBlobStore(RepositoryMetadata metadata, AzureStorageService service) {
         this.container = Repository.CONTAINER_SETTING.get(metadata.settings());
         this.locationMode = Repository.LOCATION_MODE_SETTING.get(metadata.settings());
-
-        AzureStorageSettings repositorySettings = AzureStorageSettings
-            .getClientSettings(metadata.settings());
-        service.refreshSettings(repositorySettings);
-
         this.service = service;
+        this.service.refreshSettings(service.storageSettings);
     }
 
     @Override

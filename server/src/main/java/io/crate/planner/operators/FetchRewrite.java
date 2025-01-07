@@ -25,7 +25,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
+import java.util.function.UnaryOperator;
 
 import io.crate.expression.symbol.FetchMarker;
 import io.crate.expression.symbol.InputColumn;
@@ -54,8 +54,8 @@ public final class FetchRewrite {
     public List<Reference> extractFetchRefs() {
         ArrayList<Reference> allFetchReferences = new ArrayList<>();
         for (Symbol output : plan.outputs()) {
-            if (output instanceof FetchMarker) {
-                allFetchReferences.addAll(((FetchMarker) output).fetchRefs());
+            if (output instanceof FetchMarker fetchMarker) {
+                allFetchReferences.addAll(fetchMarker.fetchRefs());
             }
         }
         return allFetchReferences;
@@ -66,8 +66,7 @@ public final class FetchRewrite {
         List<Symbol> outputs = plan.outputs();
         for (int i = 0; i < outputs.size(); i++) {
             Symbol output = outputs.get(i);
-            if (output instanceof FetchMarker) {
-                FetchMarker fetchMarker = (FetchMarker) output;
+            if (output instanceof FetchMarker fetchMarker) {
                 RelationName tableName = fetchMarker.fetchId().ident().tableIdent();
                 FetchSource fetchSource = fetchSources.get(tableName);
                 if (fetchSource == null) {
@@ -108,7 +107,7 @@ public final class FetchRewrite {
     /**
      * @return A function that converts any symbol within a symbol-tree that is present in `replacedOutputs` from the key to the value.
      */
-    public Function<Symbol, Symbol> mapToFetchStubs() {
+    public UnaryOperator<Symbol> mapToFetchStubs() {
         return s -> MapBackedSymbolReplacer.convert(s, replacedOutputs);
     }
 }

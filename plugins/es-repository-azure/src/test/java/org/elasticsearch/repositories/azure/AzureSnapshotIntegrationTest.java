@@ -30,7 +30,6 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collection;
 
-import org.elasticsearch.common.network.InetAddresses;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.test.IntegTestCase;
 import org.junit.After;
@@ -39,6 +38,7 @@ import org.junit.Test;
 
 import com.sun.net.httpserver.HttpServer;
 
+import io.crate.azure.testing.AzureHttpHandler;
 import io.crate.testing.Asserts;
 
 @IntegTestCase.ClusterScope(scope = IntegTestCase.Scope.TEST)
@@ -60,8 +60,8 @@ public class AzureSnapshotIntegrationTest extends IntegTestCase {
     @Before
     public void setUp() throws Exception {
         super.setUp();
-        handler = new AzureHttpHandler(CONTAINER_NAME);
-        httpServer = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 10001), 0);
+        handler = new AzureHttpHandler(CONTAINER_NAME, false);
+        httpServer = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         httpServer.createContext("/" + CONTAINER_NAME, handler);
         httpServer.start();
     }
@@ -152,6 +152,43 @@ public class AzureSnapshotIntegrationTest extends IntegTestCase {
     }
 
     @Test
+    public void test_create_azure_repo_with_sas_token() {
+        execute("CREATE REPOSITORY r1 TYPE AZURE WITH (" +
+            "container = '" + CONTAINER_NAME + "', " +
+            "account = 'devstoreaccount1', " +
+            "sas_token = 'aaQc3RvcmVhY2NvdW50Mdhdhd', " +
+            "location_mode = 'PRIMARY_ONLY', " +
+            "endpoint = '" + httpServerUrl() + "')");
+        assertThat(response.rowCount()).isEqualTo(1L);
+    }
+
+    @Test
+    public void test_create_azure_repo_with_sas_token_and_key_fails() {
+        Asserts.assertSQLError(() ->
+            execute("CREATE REPOSITORY r1 TYPE AZURE WITH (" +
+            "container = '" + CONTAINER_NAME + "', " +
+            "account = 'devstoreaccount1', " +
+            "sas_token = 'aaQc3RvcmVhY2NvdW50Mdhdhd', " +
+            "key = 'ZGV2c3RvcmVhY2NvdW50MQ==', " +
+            "location_mode = 'PRIMARY_ONLY', " +
+            "endpoint = '" + httpServerUrl() + "')"))
+            .hasPGError(INTERNAL_ERROR)
+            .hasHTTPError(INTERNAL_SERVER_ERROR, 5000)
+            .hasMessageContaining("[r1] Unable to verify the repository, [r1] is not accessible on master node: " +
+                "SettingsException 'Both a secret as well as a shared access token were set.'");
+    }
+
+    @Test
+    public void test_create_azure_repo_with_missing_mandatory_settings() {
+        Asserts.assertSQLError(() ->
+                execute("CREATE REPOSITORY r1 TYPE AZURE WITH (account = 'devstoreaccount1')"))
+            .hasPGError(INTERNAL_ERROR)
+            .hasHTTPError(INTERNAL_SERVER_ERROR, 5000)
+            .hasMessageContaining("[r1] Unable to verify the repository, [r1] is not accessible on master node: " +
+                "SettingsException 'Neither a secret key nor a shared access token was set.'");
+    }
+
+    @Test
     public void test_invalid_settings_to_create_azure_repository() {
         Asserts.assertSQLError(() -> execute(
             "CREATE REPOSITORY r1 TYPE AZURE WITH (container = 'invalid', " +
@@ -166,11 +203,11 @@ public class AzureSnapshotIntegrationTest extends IntegTestCase {
 
     private String httpServerUrl() {
         InetSocketAddress address = httpServer.getAddress();
-        return "http://" + InetAddresses.toUriString(address.getAddress()) + ":" + address.getPort();
+        return "http://" + address.getAddress().getHostAddress() + ":" + address.getPort();
     }
 
     private String invalidHttpServerUrl() {
         InetSocketAddress address = httpServer.getAddress();
-        return "http://dummy.invalid:" + address.getPort();
+        return "http://127.0.0.0:" + address.getPort();
     }
 }

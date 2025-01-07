@@ -21,10 +21,9 @@
 
 package org.elasticsearch.common.settings;
 
-import static org.hamcrest.Matchers.containsString;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.fail;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.fail;
 
 import org.elasticsearch.common.settings.Setting.Property;
 import org.junit.Test;
@@ -42,35 +41,38 @@ public class SettingsModuleTests extends ModuleTestCase {
         }
         {
             Settings settings = Settings.builder().put("cluster.routing.allocation.balance.shard", "[2.0]").build();
-            IllegalArgumentException ex = expectThrows(IllegalArgumentException.class,
-                () ->  new SettingsModule(settings));
-            assertEquals("Failed to parse value [[2.0]] for setting [cluster.routing.allocation.balance.shard]", ex.getMessage());
+            assertThatThrownBy(() ->  new SettingsModule(settings))
+                .isExactlyInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Failed to parse value [[2.0]] for setting [cluster.routing.allocation.balance.shard]");
         }
 
         {
             Settings settings = Settings.builder().put("cluster.routing.allocation.balance.shard", "[2.0]")
                 .put("some.foo.bar", 1).build();
-            IllegalArgumentException ex = expectThrows(IllegalArgumentException.class,
-                () -> new SettingsModule(settings));
-            assertEquals("Failed to parse value [[2.0]] for setting [cluster.routing.allocation.balance.shard]", ex.getMessage());
-            assertEquals(1, ex.getSuppressed().length);
-            assertEquals("unknown setting [some.foo.bar] please check that any required plugins are installed, or check the breaking " +
-                "changes documentation for removed settings", ex.getSuppressed()[0].getMessage());
+            assertThatThrownBy(() -> new SettingsModule(settings))
+                .isExactlyInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Failed to parse value [[2.0]] for setting [cluster.routing.allocation.balance.shard]")
+                .satisfies(ex -> {
+                    assertThat(ex.getSuppressed()).hasSize(1);
+                    assertThat(ex.getSuppressed()[0].getMessage()).isEqualTo(
+                        "unknown setting [some.foo.bar] please check that any required plugins are installed, or check the breaking " +
+                        "changes documentation for removed settings"
+                    );
+                });
         }
 
         {
             Settings settings = Settings.builder().put("index.codec", "default")
                 .put("index.foo.bar", 1).build();
-            IllegalArgumentException ex = expectThrows(IllegalArgumentException.class,
-                () -> new SettingsModule(settings));
-            assertEquals("Index settings found. These have been unsupported since CrateDB 2.0 and should've been migrated.",
-                         ex.getMessage());
+            assertThatThrownBy(() -> new SettingsModule(settings))
+                .isExactlyInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Index settings found. These have been unsupported since CrateDB 2.0 and should've been migrated.");
         }
 
         {
             Settings settings = Settings.builder().put("index.codec", "default").build();
             SettingsModule module = new SettingsModule(settings);
-            assertInstanceBinding(module, Settings.class, (s) -> s == settings);
+            assertInstanceBinding(module, Settings.class, s -> s == settings);
         }
     }
 
@@ -79,7 +81,7 @@ public class SettingsModuleTests extends ModuleTestCase {
         {
             Settings settings = Settings.builder().put("some.custom.setting", "2.0").build();
             SettingsModule module = new SettingsModule(settings, Setting.floatSetting("some.custom.setting", 1.0f, Property.NodeScope));
-            assertInstanceBinding(module, Settings.class, (s) -> s == settings);
+            assertInstanceBinding(module, Settings.class, s -> s == settings);
         }
         {
             Settings settings = Settings.builder().put("some.custom.setting", "false").build();
@@ -87,7 +89,7 @@ public class SettingsModuleTests extends ModuleTestCase {
                 new SettingsModule(settings, Setting.floatSetting("some.custom.setting", 1.0f, Property.NodeScope));
                 fail();
             } catch (IllegalArgumentException ex) {
-                assertEquals("Failed to parse value [false] for setting [some.custom.setting]", ex.getMessage());
+                assertThat(ex.getMessage()).isEqualTo("Failed to parse value [false] for setting [some.custom.setting]");
             }
         }
     }
@@ -97,13 +99,14 @@ public class SettingsModuleTests extends ModuleTestCase {
         {
             Settings settings = Settings.builder().put("logger._root", "TRACE").put("logger.transport", "INFO").build();
             SettingsModule module = new SettingsModule(settings);
-            assertInstanceBinding(module, Settings.class, (s) -> s == settings);
+            assertInstanceBinding(module, Settings.class, s -> s == settings);
         }
 
         {
             Settings settings = Settings.builder().put("logger._root", "BOOM").put("logger.transport", "WOW").build();
-            IllegalArgumentException ex = expectThrows(IllegalArgumentException.class, () -> new SettingsModule(settings));
-            assertEquals("Unknown level constant [BOOM].", ex.getMessage());
+            assertThatThrownBy(() -> new SettingsModule(settings))
+                .isExactlyInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown level constant [BOOM].");
         }
     }
 
@@ -117,7 +120,7 @@ public class SettingsModuleTests extends ModuleTestCase {
             new SettingsModule(Settings.EMPTY, Setting.simpleString("foo.bar"));
             fail("No scope should fail");
         } catch (IllegalArgumentException e) {
-            assertThat(e.getMessage(), containsString("No scope found for setting"));
+            assertThat(e.getMessage()).contains("No scope found for setting");
         }
         // Some settings have both scopes - that's fine too if they have per-node defaults
         try {
@@ -126,7 +129,7 @@ public class SettingsModuleTests extends ModuleTestCase {
                 Setting.simpleString("foo.bar", Property.NodeScope));
             fail("already registered");
         } catch (IllegalArgumentException e) {
-            assertThat(e.getMessage(), containsString("Cannot register setting [foo.bar] twice"));
+            assertThat(e.getMessage()).contains("Cannot register setting [foo.bar] twice");
         }
 
         try {
@@ -135,7 +138,7 @@ public class SettingsModuleTests extends ModuleTestCase {
                 Setting.simpleString("foo.bar", Property.IndexScope));
             fail("already registered");
         } catch (IllegalArgumentException e) {
-            assertThat(e.getMessage(), containsString("Cannot register setting [foo.bar] twice"));
+            assertThat(e.getMessage()).contains("Cannot register setting [foo.bar] twice");
         }
     }
 }

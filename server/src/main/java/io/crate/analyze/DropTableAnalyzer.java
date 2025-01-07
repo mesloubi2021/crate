@@ -72,24 +72,19 @@ class DropTableAnalyzer {
     private <T extends TableInfo> AnalyzedDropTable<T> analyze(QualifiedName name,
                                                                boolean dropIfExists,
                                                                CoordinatorSessionSettings sessionSettings) {
-        T tableInfo;
         RelationName tableName;
-        boolean maybeCorrupt = false;
         try {
-            //noinspection unchecked
-            tableInfo = (T) schemas.resolveTableInfo(name, Operation.DROP, sessionSettings.sessionUser(), sessionSettings.searchPath());
+            TableInfo tableInfo = schemas.findRelation(
+                name,
+                Operation.DROP,
+                sessionSettings.sessionUser(),
+                sessionSettings.searchPath()
+            );
             tableName = tableInfo.ident();
         } catch (SchemaUnknownException | RelationUnknown e) {
             tableName = RelationName.of(name, sessionSettings.searchPath().currentSchema());
             var metadata = clusterService.state().metadata();
-            var indexNameOrAlias = tableName.indexNameOrAlias();
-
-            if (metadata.hasIndex(indexNameOrAlias) || metadata.templates().containsKey(indexNameOrAlias)) {
-                tableInfo = null;
-                maybeCorrupt = true;
-            } else if (dropIfExists) {
-                tableInfo = null;
-            } else {
+            if (!(metadata.contains(tableName) || dropIfExists)) {
                 throw e;
             }
         } catch (OperationOnInaccessibleRelationException e) {
@@ -98,8 +93,6 @@ class DropTableAnalyzer {
             if (!sessionSettings.sessionUser().isSuperUser()) {
                 throw t;
             }
-            tableInfo = null;
-            maybeCorrupt = true;
             tableName = RelationName.of(name, sessionSettings.searchPath().currentSchema());
             LOGGER.info(
                 "Unexpected error resolving table during DROP TABLE operation on {}. " +
@@ -108,6 +101,6 @@ class DropTableAnalyzer {
                 t
             );
         }
-        return new AnalyzedDropTable<>(tableInfo, dropIfExists, tableName, maybeCorrupt);
+        return new AnalyzedDropTable<>(dropIfExists, tableName);
     }
 }

@@ -24,13 +24,12 @@ package io.crate.execution.dml;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 
-import org.apache.lucene.document.FieldType;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
 import org.elasticsearch.index.mapper.ParsedDocument;
 import org.jetbrains.annotations.NotNull;
@@ -52,9 +51,8 @@ public class RawIndexer {
     private final DocTableInfo table;
     private final TransactionContext txnCtx;
     private final NodeContext nodeCtx;
-    private final Function<ColumnIdent, Reference> getRef;
-    private final Function<String, FieldType> getFieldType;
     private final Symbol[] returnValues;
+    private final Version shardVersionCreated;
 
     private final Map<Set<String>, Indexer> indexers = new HashMap<>();
     private final List<Reference> nonDeterministicSynthetics;
@@ -65,19 +63,18 @@ public class RawIndexer {
 
     public RawIndexer(String indexName,
                       DocTableInfo table,
+                      Version shardVersionCreated,
                       TransactionContext txnCtx,
                       NodeContext nodeCtx,
-                      Function<String, FieldType> getFieldType,
                       Symbol[] returnValues,
                       @NotNull List<Reference> nonDeterministicSynthetics) {
         this.indexName = indexName;
         this.table = table;
         this.txnCtx = txnCtx;
         this.nodeCtx = nodeCtx;
-        this.getRef = table::getReference;
-        this.getFieldType = getFieldType;
         this.returnValues = returnValues;
         this.nonDeterministicSynthetics = nonDeterministicSynthetics;
+        this.shardVersionCreated = shardVersionCreated;
     }
 
     /**
@@ -89,7 +86,7 @@ public class RawIndexer {
         currentRowIndexer = indexers.computeIfAbsent(doc.keySet(), keys -> {
             List<Reference> targetRefs = new ArrayList<>();
             for (String key : keys) {
-                ColumnIdent column = new ColumnIdent(key);
+                ColumnIdent column = ColumnIdent.of(key);
                 Reference reference = table.getReference(column);
                 if (reference == null) {
                     reference = table.getDynamic(column, true, txnCtx.sessionSettings().errorOnUnknownObjectKey());
@@ -105,9 +102,9 @@ public class RawIndexer {
             return new Indexer(
                 indexName,
                 table,
+                shardVersionCreated,
                 txnCtx,
                 nodeCtx,
-                getFieldType,
                 targetRefs,
                 returnValues
             );
@@ -117,11 +114,12 @@ public class RawIndexer {
         assert numExtra == nonDeterministicSynthetics.size() : "Insert columns/values expansion must be done in sync";
 
         Object[] insertValues = new Object[doc.size() + numExtra];
-        Iterator<Object> iterator = doc.values().iterator();
         List<Reference> columns = currentRowIndexer.columns();
         for (int i = 0; i < doc.size(); i++) {
             Reference reference = columns.get(i);
-            Object value = iterator.next();
+            // JSON file can have rows with same keys but in different order.
+            // We rely on reused currentRowIndexer's target columns order when fetching values from every row.
+            Object value = doc.get(reference.column().name()); // Not using FQN, we are fetching only top-level columns.
             DataType<?> type = reference.valueType();
             try {
                 insertValues[i] = type.implicitCast(value);
@@ -160,7 +158,7 @@ public class RawIndexer {
      * {@link #collectSchemaUpdates(IndexItem)}) have been added to the cluster
      * state.
      */
-    public ParsedDocument index(IndexItem item) throws IOException {
+    public ParsedDocument index() throws IOException {
         assert currentRowIndexer != null : "Must be used only after collecting schema updates.";
 
         ParsedDocument parsedDoc = currentRowIndexer.index(currentItem);

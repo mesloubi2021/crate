@@ -32,9 +32,7 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.NumericUtils;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.Version;
-import org.elasticsearch.index.fielddata.FieldData;
-import org.elasticsearch.index.fielddata.SortedBinaryDocValues;
-import org.elasticsearch.search.DocValueFormat;
+import org.elasticsearch.common.network.NetworkUtils;
 import org.jetbrains.annotations.Nullable;
 
 import io.crate.common.MutableObject;
@@ -45,7 +43,10 @@ import io.crate.execution.engine.aggregation.DocValueAggregator;
 import io.crate.expression.reference.doc.lucene.LuceneReferenceResolver;
 import io.crate.expression.symbol.Literal;
 import io.crate.memory.MemoryManager;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.Reference;
+import io.crate.metadata.Scalar;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.metadata.functions.BoundSignature;
 import io.crate.metadata.functions.Signature;
@@ -71,16 +72,24 @@ public class ArbitraryAggregation extends AggregationFunction<Object, Object> {
      **/
     public static final String ALIAS = "any_value";
 
-    public static void register(AggregationImplModule mod) {
+    public static void register(Functions.Builder builder) {
         TypeSignature T = TypeSignature.parse("T");
-        mod.register(
-            Signature.aggregate(NAME, T, T)
-                .withTypeVariableConstraints(TypeVariableConstraint.typeVariableOfAnyType("T")),
+        builder.add(
+                Signature.builder(NAME, FunctionType.AGGREGATE)
+                        .argumentTypes(T)
+                        .returnType(T)
+                        .features(Scalar.Feature.DETERMINISTIC)
+                        .typeVariableConstraints(TypeVariableConstraint.typeVariableOfAnyType("T"))
+                        .build(),
             ArbitraryAggregation::new
         );
-        mod.register(
-            Signature.aggregate(ALIAS, T, T)
-                .withTypeVariableConstraints(TypeVariableConstraint.typeVariableOfAnyType("T")),
+        builder.add(
+                Signature.builder(ALIAS, FunctionType.AGGREGATE)
+                        .argumentTypes(T)
+                        .returnType(T)
+                        .features(Scalar.Feature.DETERMINISTIC)
+                        .typeVariableConstraints(TypeVariableConstraint.typeVariableOfAnyType("T"))
+                        .build(),
             ArbitraryAggregation::new
         );
     }
@@ -150,8 +159,12 @@ public class ArbitraryAggregation extends AggregationFunction<Object, Object> {
     public DocValueAggregator<?> getDocValueAggregator(LuceneReferenceResolver referenceResolver,
                                                        List<Reference> aggregationReferences,
                                                        DocTableInfo table,
+                                                       Version shardCreatedVersion,
                                                        List<Literal<?>> optionalParams) {
         Reference arg = aggregationReferences.get(0);
+        if (arg == null) {
+            return null;
+        }
         if (!arg.hasDocValues()) {
             return null;
         }
@@ -277,7 +290,7 @@ public class ArbitraryAggregation extends AggregationFunction<Object, Object> {
         private final String columnName;
         private final DataType<T> dataType;
 
-        private SortedBinaryDocValues values;
+        private SortedSetDocValues values;
 
         public ArbitraryBinaryDocValueAggregator(String columnName, DataType<T> dataType) {
             this.columnName = columnName;
@@ -291,14 +304,15 @@ public class ArbitraryAggregation extends AggregationFunction<Object, Object> {
 
         @Override
         public void loadDocValues(LeafReaderContext reader) throws IOException {
-            values = FieldData.toString(DocValues.getSortedSet(reader.reader(), columnName));
+            values = DocValues.getSortedSet(reader.reader(), columnName);
         }
 
         @Override
         public void apply(RamAccounting ramAccounting, int doc, MutableObject state) throws IOException {
             if (values.advanceExact(doc) && values.docValueCount() == 1) {
                 if (!state.hasValue()) {
-                    var value = dataType.sanitizeValue(values.nextValue().utf8ToString());
+                    var rawValue = values.lookupOrd(values.nextOrd());
+                    var value = dataType.sanitizeValue(rawValue.utf8ToString());
                     ramAccounting.addBytes(dataType.valueBytes(value));
                     state.setValue(value);
                 }
@@ -342,7 +356,7 @@ public class ArbitraryAggregation extends AggregationFunction<Object, Object> {
                 if (!state.hasValue()) {
                     long ord = values.nextOrd();
                     BytesRef encoded = values.lookupOrd(ord);
-                    String value = (String) DocValueFormat.IP.format(encoded);
+                    String value = NetworkUtils.formatIPBytes(encoded);
                     ramAccounting.addBytes(RamUsageEstimator.sizeOf(value));
                     state.setValue(value);
                 }

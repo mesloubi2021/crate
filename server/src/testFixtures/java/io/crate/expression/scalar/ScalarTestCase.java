@@ -35,7 +35,7 @@ import org.junit.Before;
 
 import io.crate.analyze.relations.AnalyzedRelation;
 import io.crate.analyze.relations.DocTableRelation;
-import io.crate.common.collections.Lists2;
+import io.crate.common.collections.Lists;
 import io.crate.data.Input;
 import io.crate.data.Row;
 import io.crate.execution.engine.collect.CollectExpression;
@@ -55,12 +55,13 @@ import io.crate.metadata.TransactionContext;
 import io.crate.metadata.doc.DocSchemaInfo;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.metadata.settings.SessionSettings;
+import io.crate.role.Role;
+import io.crate.role.Roles;
+import io.crate.role.metadata.RolesHelper;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.testing.SQLExecutor;
 import io.crate.testing.SqlExpressions;
 import io.crate.types.DataType;
-import io.crate.user.User;
-import io.crate.user.UserLookup;
 
 public abstract class ScalarTestCase extends CrateDummyClusterServiceUnitTest {
 
@@ -100,6 +101,8 @@ public abstract class ScalarTestCase extends CrateDummyClusterServiceUnitTest {
             "  geopoint geo_point," +
             "  geostring text," +
             "  is_awesome boolean," +
+            "  numeric_val numeric(38, 37)," +
+            "  numeric_4_2 numeric(4, 2)," +
             "  double_val double precision," +
             "  float_val real," +
             "  short_val smallint," +
@@ -154,10 +157,10 @@ public abstract class ScalarTestCase extends CrateDummyClusterServiceUnitTest {
                 inputs[i] = ((Input<?>) function.arguments().get(i));
             }
             Object expectedValue = ((Input<?>) normalized).value();
-            assertThat(((Scalar) impl).evaluate(txnCtx, null, inputs))
+            assertThat(((Scalar) impl).evaluate(txnCtx, sqlExpressions.nodeCtx, inputs))
                 .isEqualTo(expectedValue);
             assertThat(((Scalar) impl)
-                           .compile(function.arguments(), "dummy", () -> List.of(User.CRATE_USER))
+                           .compile(function.arguments(), "dummy", () -> List.of(Role.CRATE_USER))
                            .evaluate(txnCtx, sqlExpressions.nodeCtx, inputs))
                 .isEqualTo(expectedValue);
         }
@@ -177,11 +180,12 @@ public abstract class ScalarTestCase extends CrateDummyClusterServiceUnitTest {
      * </code>
      */
     public void assertEvaluate(String functionExpression, Object expectedValue, Literal<?>... literals) {
-        assertEvaluate(functionExpression, s -> assertThat(s).isEqualTo(expectedValue), literals);
-    }
-
-    public void assertEvaluate(String functionExpression, Object expectedValue, String errorMessage, Literal<?>... literals) {
-        assertEvaluate(functionExpression, s -> assertThat(s).withFailMessage(errorMessage).isEqualTo(expectedValue), literals);
+        assertEvaluate(
+            functionExpression,
+            s -> assertThat(s)
+                .as("`" + functionExpression + "` must evaluate to %s (literals=%s)", expectedValue, Arrays.toString(literals))
+                .isEqualTo(expectedValue),
+            literals);
     }
 
     /**
@@ -244,7 +248,7 @@ public abstract class ScalarTestCase extends CrateDummyClusterServiceUnitTest {
             Input<?> input = ctx.add(arg);
             arguments[i] = new AssertMax1ValueCallInput(input);
         }
-        Object actualValue = scalar.compile(function.arguments(), "dummy", () -> List.of(User.CRATE_USER))
+        Object actualValue = scalar.compile(function.arguments(), "dummy", () -> List.of(Role.CRATE_USER))
             .evaluate(txnCtx, sqlExpressions.nodeCtx, arguments);
         assertThat((T) actualValue).satisfies(expectedValue);
 
@@ -255,24 +259,27 @@ public abstract class ScalarTestCase extends CrateDummyClusterServiceUnitTest {
 
         actualValue = scalar.evaluate(txnCtx, sqlExpressions.nodeCtx, arguments);
         assertThat((T) actualValue).satisfies(expectedValue);
+        if (scalar.signature().hasFeature(Scalar.Feature.NOTNULL)) {
+            assertThat(actualValue).isNotNull();
+        }
     }
 
     @SuppressWarnings("rawtypes")
     public void assertCompile(String functionExpression,
                               java.util.function.Function<Scalar, Consumer<Scalar>> matcher) {
-        assertCompile(functionExpression, User.of("dummy"), () -> List.of(User.of("dummy")), matcher);
+        assertCompile(functionExpression, RolesHelper.userOf("dummy"), () -> List.of(RolesHelper.userOf("dummy")), matcher);
     }
 
     @SuppressWarnings("rawtypes")
     public void assertCompileAsSuperUser(String functionExpression,
                                          java.util.function.Function<Scalar, Consumer<Scalar>> matcher) {
-        assertCompile(functionExpression, User.CRATE_USER, () -> List.of(User.CRATE_USER), matcher);
+        assertCompile(functionExpression, Role.CRATE_USER, () -> List.of(Role.CRATE_USER), matcher);
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
     public void assertCompile(String functionExpression,
-                              User sessionUser,
-                              UserLookup userLookup,
+                              Role sessionUser,
+                              Roles roles,
                               java.util.function.Function<Scalar, Consumer<Scalar>> matcher) {
         Symbol functionSymbol = sqlExpressions.asSymbol(functionExpression);
         functionSymbol = sqlExpressions.normalize(functionSymbol);
@@ -285,7 +292,7 @@ public abstract class ScalarTestCase extends CrateDummyClusterServiceUnitTest {
             .as("Function implementation not found using full qualified lookup")
             .isNotNull();
 
-        Scalar compiled = scalar.compile(function.arguments(), sessionUser.name(), userLookup);
+        Scalar compiled = scalar.compile(function.arguments(), sessionUser.name(), roles);
         assertThat(compiled).satisfies(matcher.apply(scalar));
     }
 
@@ -300,7 +307,7 @@ public abstract class ScalarTestCase extends CrateDummyClusterServiceUnitTest {
 
     protected FunctionImplementation getFunction(String functionName, List<DataType<?>> argTypes) {
         return sqlExpressions.nodeCtx.functions().get(
-            null, functionName, Lists2.map(argTypes, t -> new InputColumn(0, t)), SearchPath.pathWithPGCatalogAndDoc());
+            null, functionName, Lists.map(argTypes, t -> new InputColumn(0, t)), SearchPath.pathWithPGCatalogAndDoc());
     }
 
     @SuppressWarnings("NewClassNamingConvention")

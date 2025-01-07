@@ -29,11 +29,10 @@ import java.util.Map;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.ResourceNotFoundException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.ChannelActionListener;
-import org.elasticsearch.action.support.PlainActionFuture;
+import org.elasticsearch.action.support.PlainFuture;
 import org.elasticsearch.cluster.ClusterChangedEvent;
 import org.elasticsearch.cluster.ClusterStateListener;
 import org.elasticsearch.cluster.node.DiscoveryNode;
@@ -57,6 +56,7 @@ import io.crate.blob.BlobTransferTarget;
 import io.crate.blob.recovery.BlobRecoveryHandler;
 import io.crate.blob.v2.BlobIndex;
 import io.crate.blob.v2.BlobIndicesService;
+import io.crate.exceptions.SQLExceptions;
 
 /**
  * The source recovery accepts recovery requests from other peer shards and start the recovery process from this
@@ -279,18 +279,18 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
                         shard.recoveryStats().decCurrentAsSource();
                     }
                 }
-                ExceptionsHelper.maybeThrowRuntimeAndSuppress(failures);
+                SQLExceptions.maybeThrowRuntimeAndSuppress(failures);
             }
         }
 
         void awaitEmpty() {
             assert lifecycle.stoppedOrClosed();
-            final PlainActionFuture<Void> future;
+            final PlainFuture<Void> future;
             synchronized (this) {
                 if (ongoingRecoveries.isEmpty()) {
                     return;
                 }
-                future = new PlainActionFuture<>();
+                future = new PlainFuture<>();
                 if (emptyListeners == null) {
                     emptyListeners = new ArrayList<>();
                 }

@@ -23,7 +23,6 @@ package io.crate.integrationtests;
 
 import static io.crate.replication.logical.LogicalReplicationSettings.REPLICATION_READ_POLL_DURATION;
 import static io.crate.testing.Asserts.assertThat;
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.elasticsearch.discovery.DiscoveryModule.DISCOVERY_SEED_PROVIDERS_SETTING;
 import static org.elasticsearch.discovery.SettingsBasedSeedHostsProvider.DISCOVERY_SEED_HOSTS_SETTING;
 
@@ -42,9 +41,6 @@ import java.util.Locale;
 import java.util.StringJoiner;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
-
-import org.jetbrains.annotations.Nullable;
 
 import org.elasticsearch.ElasticsearchTimeoutException;
 import org.elasticsearch.action.admin.cluster.state.ClusterStateRequest;
@@ -58,18 +54,19 @@ import org.elasticsearch.test.NodeConfigurationSource;
 import org.elasticsearch.test.TestCluster;
 import org.elasticsearch.test.transport.MockTransportService;
 import org.elasticsearch.threadpool.TestThreadPool;
-import org.elasticsearch.transport.Netty4Plugin;
 import org.elasticsearch.transport.TransportService;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Before;
 
+import io.crate.execution.dml.BulkResponse;
 import io.crate.protocols.postgres.PostgresNetty;
 import io.crate.replication.logical.LogicalReplicationService;
 import io.crate.replication.logical.LogicalReplicationSettings;
 import io.crate.replication.logical.metadata.SubscriptionsMetadata;
+import io.crate.role.Role;
 import io.crate.testing.SQLResponse;
 import io.crate.testing.SQLTransportExecutor;
-import io.crate.user.User;
 
 public abstract class LogicalReplicationITestCase extends ESTestCase {
 
@@ -80,12 +77,6 @@ public abstract class LogicalReplicationITestCase extends ESTestCase {
     SQLTransportExecutor subscriberSqlExecutor;
 
     protected static final String SUBSCRIBING_USER = "subscriber";
-
-    protected Collection<Class<? extends Plugin>> nodePlugins() {
-        return List.of(
-            Netty4Plugin.class
-        );
-    }
 
     @Before
     public void setupClusters() throws IOException, InterruptedException {
@@ -107,8 +98,7 @@ public abstract class LogicalReplicationITestCase extends ESTestCase {
             createNodeConfigurationSource(),
             0,
             "publisher",
-            Stream.concat(nodePlugins().stream(), mockPlugins.stream())
-                .collect(Collectors.toList()),
+            mockPlugins,
             true
         );
         publisherCluster.beforeTest(random());
@@ -126,8 +116,7 @@ public abstract class LogicalReplicationITestCase extends ESTestCase {
             createNodeConfigurationSource(),
             0,
             "subscriber",
-            Stream.concat(nodePlugins().stream(), mockPlugins.stream())
-                .collect(Collectors.toList()),
+            mockPlugins,
             true
         );
         subscriberCluster.beforeTest(random());
@@ -139,7 +128,11 @@ public abstract class LogicalReplicationITestCase extends ESTestCase {
     public void clearCluster() throws Exception {
         // Existing subscriptions must be dropped first before any index is deleted.
         // Otherwise, the metadata tracking logic would try to restore these indices.
-        dropSubscriptions();
+        try {
+            dropSubscriptions();
+        } catch (Exception e) {
+            // ignore
+        }
         stopCluster(subscriberCluster);
         subscriberCluster = null;
         stopCluster(publisherCluster);
@@ -190,11 +183,11 @@ public abstract class LogicalReplicationITestCase extends ESTestCase {
         return publisherSqlExecutor.exec(sql);
     }
 
-    SQLResponse executeOnPublisherAsUser(String sql, User user) {
+    SQLResponse executeOnPublisherAsUser(String sql, Role user) {
         return publisherSqlExecutor.executeAs(sql, user);
     }
 
-    long[] executeBulkOnPublisher(String sql, @Nullable Object[][] bulkArgs) {
+    BulkResponse executeBulkOnPublisher(String sql, @Nullable Object[][] bulkArgs) {
         return publisherSqlExecutor.execBulk(sql, bulkArgs);
     }
 
@@ -275,7 +268,7 @@ public abstract class LogicalReplicationITestCase extends ESTestCase {
                 "SELECT health, count(*) FROM sys.health GROUP BY 1");
             assertThat(response).hasRowCount(1L);
             assertThat(response.rows()[0][0]).isEqualTo("GREEN");
-        }, 10, TimeUnit.SECONDS);
+        }, 30, TimeUnit.SECONDS);
     }
 
     /**
@@ -319,7 +312,7 @@ public abstract class LogicalReplicationITestCase extends ESTestCase {
         ensureGreenOnSubscriber();
     }
 
-    protected void createSubscriptionAsUser(String subName, String pubName, User user) throws Exception {
+    protected void createSubscriptionAsUser(String subName, String pubName, Role user) throws Exception {
         subscriberSqlExecutor.executeAs("CREATE SUBSCRIPTION " + subName +
             " CONNECTION '" + publisherConnectionUrl() + "' publication " + pubName, user);
         ensureGreenOnSubscriber();

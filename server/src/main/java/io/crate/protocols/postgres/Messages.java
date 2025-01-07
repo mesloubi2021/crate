@@ -27,16 +27,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.SortedSet;
 
-import org.jetbrains.annotations.Nullable;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.jetbrains.annotations.Nullable;
 
 import io.crate.auth.AccessControl;
 import io.crate.data.Row;
 import io.crate.exceptions.SQLExceptions;
 import io.crate.expression.symbol.Symbol;
-import io.crate.expression.symbol.Symbols;
 import io.crate.metadata.Reference;
 import io.crate.metadata.RelationInfo;
 import io.crate.metadata.pgcatalog.OidHash;
@@ -182,11 +180,18 @@ public class Messages {
         byte[] msg = message.getBytes(StandardCharsets.UTF_8);
         byte[] errorCode = PGErrorStatus.INVALID_AUTHORIZATION_SPECIFICATION.code().getBytes(StandardCharsets.UTF_8);
 
-        sendErrorResponse(channel, message, msg, PGError.SEVERITY_FATAL, null, null,
+        sendErrorResponse(channel, message, msg, PGError.Severity.FATAL.bytes(), null, null,
                           METHOD_NAME_CLIENT_AUTH, errorCode);
     }
 
     static ChannelFuture sendErrorResponse(Channel channel, AccessControl accessControl, Throwable throwable) {
+        return sendErrorResponse(channel, accessControl, throwable, PGError.Severity.ERROR);
+    }
+
+    static ChannelFuture sendErrorResponse(Channel channel,
+                                           AccessControl accessControl,
+                                           Throwable throwable,
+                                           PGError.Severity severity) {
         final var error = PGError.fromThrowable(SQLExceptions.prepareForClientTransmission(accessControl, throwable));
 
         ByteBuf buffer = channel.alloc().buffer();
@@ -194,7 +199,7 @@ public class Messages {
         buffer.writeInt(0); // length, updated later
 
         buffer.writeByte('S');
-        writeCString(buffer, PGError.SEVERITY_ERROR);
+        writeCString(buffer, severity.bytes());
 
         buffer.writeByte('M');
         writeCString(buffer, error.message().getBytes(StandardCharsets.UTF_8));
@@ -232,6 +237,7 @@ public class Messages {
             }
             writeCString(buffer, sb.toString().getBytes(StandardCharsets.UTF_8));
         }
+
         buffer.writeByte(0);
         buffer.setInt(1, buffer.writerIndex() - 1); // exclude msg type from length
         ChannelFuture channelFuture = channel.writeAndFlush(buffer);
@@ -384,7 +390,7 @@ public class Messages {
      * @param channel The channel to write the parameter description to.
      * @param parameters A {@link SortedSet} containing the parameters from index 1 upwards.
      */
-    static void sendParameterDescription(Channel channel, DataType[] parameters) {
+    static void sendParameterDescription(Channel channel, DataType<?>[] parameters) {
         final int messageByteSize = 4 + 2 + parameters.length * 4;
         ByteBuf buffer = channel.alloc().buffer(messageByteSize);
         buffer.writeByte('t');
@@ -394,7 +400,7 @@ public class Messages {
             throw new IllegalArgumentException("Too many parameters. Max supported: " + Short.MAX_VALUE);
         }
         buffer.writeShort(parameters.length);
-        for (DataType dataType : parameters) {
+        for (DataType<?> dataType : parameters) {
             int pgTypeId = PGTypes.get(dataType).oid();
             buffer.writeInt(pgTypeId);
         }
@@ -435,7 +441,7 @@ public class Messages {
         }
         int idx = 0;
         for (Symbol column : columns) {
-            byte[] nameBytes = Symbols.pathFromSymbol(column).sqlFqn().getBytes(StandardCharsets.UTF_8);
+            byte[] nameBytes = column.toColumn().sqlFqn().getBytes(StandardCharsets.UTF_8);
             length += nameBytes.length + 1;
             length += columnSize;
 

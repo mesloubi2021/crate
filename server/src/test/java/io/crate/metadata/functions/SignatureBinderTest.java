@@ -36,10 +36,13 @@ import org.elasticsearch.test.ESTestCase;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Test;
 
+import io.crate.execution.engine.aggregation.impl.NumericSumAggregation;
+import io.crate.sql.tree.ColumnPolicy;
 import io.crate.types.BitStringType;
 import io.crate.types.CharacterType;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
+import io.crate.types.NumericType;
 import io.crate.types.ObjectType;
 import io.crate.types.RowType;
 import io.crate.types.StringType;
@@ -48,9 +51,7 @@ import io.crate.types.TypeSignature;
 public class SignatureBinderTest extends ESTestCase {
 
     private static Signature.Builder functionSignature() {
-        return Signature.builder()
-            .name("function")
-            .kind(SCALAR);
+        return Signature.builder("function", SCALAR);
     }
 
     @Test
@@ -243,7 +244,7 @@ public class SignatureBinderTest extends ESTestCase {
 
         assertThatSignature(getValueFunction)
             .boundTo(
-                ObjectType.builder()
+                ObjectType.of(ColumnPolicy.DYNAMIC)
                     .setInnerType("V", DataTypes.LONG).build(),
                 DataTypes.STRING)
             .produces(new BoundVariables(
@@ -254,7 +255,7 @@ public class SignatureBinderTest extends ESTestCase {
 
         assertThatSignature(getValueFunction)
             .boundTo(
-                ObjectType.builder()
+                ObjectType.of(ColumnPolicy.DYNAMIC)
                     .setInnerType("V", DataTypes.LONG).build(),
                 DataTypes.LONG)
             .withoutCoercion()
@@ -551,6 +552,32 @@ public class SignatureBinderTest extends ESTestCase {
             .fails();
     }
 
+    @Test
+    public void testNumericParameters() {
+        NumericType dt = new NumericType(10, 2);
+        assertThatSignature(NumericSumAggregation.SIGNATURE)
+            .boundTo(dt)
+            .hasReturnType(dt);
+    }
+
+    @Test
+    public void testNumericParametersWithDifferingScales() {
+        Signature foo = functionSignature()
+            .returnType(TypeSignature.parse("numeric"))
+            .argumentTypes(TypeSignature.parse("numeric"), TypeSignature.parse("numeric"))
+            .build();
+
+        NumericType numericType = new NumericType(10, 2);
+        BoundSignature expected = new BoundSignature(
+            List.of(NumericType.INSTANCE, NumericType.INSTANCE),
+            numericType
+        );
+
+        assertThatSignature(foo)
+            .boundTo(NumericType.INSTANCE, numericType)
+            .hasBoundSignature(expected);
+    }
+
     private DataType<?> type(String signature) {
         TypeSignature typeSignature = TypeSignature.parse(signature);
         return typeSignature.createType();
@@ -615,12 +642,31 @@ public class SignatureBinderTest extends ESTestCase {
             assertThat(actual).isEqualTo(expected);
         }
 
+        public void hasReturnType(DataType<?> expected) {
+            BoundSignature actual = bind();
+            assertThat(actual).isNotNull();
+            assertThat(actual.returnType()).isEqualTo(expected);
+        }
+
+        public void hasBoundSignature(BoundSignature expected) {
+            BoundSignature actual = bind();
+            assertThat(actual).isNotNull();
+            assertThat(actual).isEqualTo(expected);
+        }
+
         @Nullable
         private BoundVariables bindVariables() {
             var coercionType = allowCoercion ? SignatureBinder.CoercionType.FULL : SignatureBinder.CoercionType.NONE;
             assertThat(argumentTypes).isNotNull();
             SignatureBinder signatureBinder = new SignatureBinder(function, coercionType);
             return signatureBinder.bindVariables(argumentTypes);
+        }
+
+        private BoundSignature bind() {
+            var coercionType = allowCoercion ? SignatureBinder.CoercionType.FULL : SignatureBinder.CoercionType.NONE;
+            assertThat(argumentTypes).isNotNull();
+            SignatureBinder signatureBinder = new SignatureBinder(function, coercionType);
+            return signatureBinder.bind(argumentTypes);
         }
     }
 }

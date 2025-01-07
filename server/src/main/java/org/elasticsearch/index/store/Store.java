@@ -77,7 +77,6 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.Version;
-import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.Streams;
@@ -106,6 +105,7 @@ import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.translog.Translog;
 
 import io.crate.common.collections.Iterables;
+import io.crate.common.exceptions.Exceptions;
 import io.crate.common.io.IOUtils;
 import io.crate.common.unit.TimeValue;
 
@@ -136,12 +136,6 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     public static final String CORRUPTED_MARKER_NAME_PREFIX = "corrupted_";
     public static final Setting<TimeValue> INDEX_STORE_STATS_REFRESH_INTERVAL_SETTING =
         Setting.timeSetting("index.store.stats_refresh_interval", TimeValue.timeValueSeconds(10), Property.IndexScope);
-
-    /**
-     * Specific {@link IOContext} used to verify Lucene files footer checksums.
-     * See {@link MetadataSnapshot#checksumFromLuceneFile(Directory, String, Map, Logger, Version, boolean)}
-     */
-    public static final IOContext READONCE_CHECKSUM = new IOContext(IOContext.READONCE.context);
 
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
     private final StoreDirectory directory;
@@ -621,7 +615,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             }
         }
         if (ex.isEmpty() == false) {
-            ExceptionsHelper.rethrowAndSuppress(ex);
+            Exceptions.rethrowAndSuppress(ex);
         }
     }
 
@@ -888,7 +882,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                                                    Logger logger, Version version, boolean readFileAsHash) throws IOException {
             final String checksum;
             final BytesRefBuilder fileHash = new BytesRefBuilder();
-            try (IndexInput in = directory.openInput(file, READONCE_CHECKSUM)) {
+            try (IndexInput in = directory.openInput(file, IOContext.READONCE)) {
                 final long length;
                 try {
                     length = in.length();

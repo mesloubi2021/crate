@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
@@ -36,11 +37,10 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.util.IOUtils;
 import org.elasticsearch.action.ActionListenerResponseHandler;
-import org.elasticsearch.action.support.PlainActionFuture;
+import org.elasticsearch.action.support.PlainFuture;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.common.util.concurrent.FutureUtils;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportRequestOptions;
@@ -61,14 +61,14 @@ public class BlobTransferTarget {
 
     private static final Logger LOGGER = LogManager.getLogger(BlobTransferTarget.class);
 
-    private final ConcurrentMap<UUID, BlobTransferStatus> activeTransfers = ConcurrentCollections.newConcurrentMap();
+    private final ConcurrentMap<UUID, BlobTransferStatus> activeTransfers = new ConcurrentHashMap<>();
 
     private final BlobIndicesService blobIndicesService;
     private final ThreadPool threadPool;
     private final TransportService transportService;
     private final ClusterService clusterService;
     private CountDownLatch getHeadRequestLatch;
-    private CompletableFuture<CountDownLatch> getHeadRequestLatchFuture;
+    private final CompletableFuture<CountDownLatch> getHeadRequestLatchFuture;
     private final ConcurrentLinkedQueue<UUID> activePutHeadChunkTransfers;
     private CountDownLatch activePutHeadChunkTransfersLatch;
     private volatile boolean recoveryActive = false;
@@ -166,7 +166,7 @@ public class BlobTransferTarget {
         DiscoveryNode recipientNodeId = nodes.get(request.sourceNodeId);
         String senderNodeId = nodes.getLocalNodeId();
 
-        var listener = new PlainActionFuture<BlobTransferInfoResponse>();
+        var listener = new PlainFuture<BlobTransferInfoResponse>();
         transportService.sendRequest(
             recipientNodeId,
             BlobHeadRequestHandler.Actions.GET_TRANSFER_INFO,
@@ -191,7 +191,7 @@ public class BlobTransferTarget {
                      transferInfoResponse.digest, request.transferId
         );
 
-        var getBlobHeadListener = new PlainActionFuture<>();
+        var getBlobHeadListener = new PlainFuture<>();
         transportService.sendRequest(
             recipientNodeId,
             BlobHeadRequestHandler.Actions.GET_BLOB_HEAD,
@@ -241,7 +241,7 @@ public class BlobTransferTarget {
         boolean toSchedule = false;
         synchronized (lock) {
             if (recoveryActive) {
-                /**
+                /*
                  * the recovery target node might request the transfer context. So it is
                  * necessary to keep the state until the recovery is done.
                  */
@@ -253,7 +253,7 @@ public class BlobTransferTarget {
         if (toSchedule) {
             LOGGER.debug("finished transfer {}, removing state", transferId);
 
-            /**
+            /*
              * there might be a race condition that the recoveryActive flag is still false although a
              * recovery has been started.
              *
@@ -325,7 +325,7 @@ public class BlobTransferTarget {
     }
 
     public void gotAGetBlobHeadRequest(UUID transferId) {
-        /**
+        /*
          * this method might be called before the getHeadRequestLatch is initialized
          * the future is used here to wait until it is initialized.
          */

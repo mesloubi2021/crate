@@ -34,6 +34,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 
 import org.elasticsearch.common.UUIDs;
 import org.jetbrains.annotations.Nullable;
@@ -43,17 +44,14 @@ import io.crate.analyze.expressions.ExpressionAnalysisContext;
 import io.crate.analyze.expressions.ExpressionAnalyzer;
 import io.crate.analyze.relations.FieldProvider;
 import io.crate.common.annotations.NotThreadSafe;
-import io.crate.common.collections.Lists2;
+import io.crate.common.collections.Lists;
 import io.crate.exceptions.ColumnUnknownException;
 import io.crate.exceptions.ColumnValidationException;
 import io.crate.expression.eval.EvaluatingNormalizer;
 import io.crate.expression.scalar.cast.CastMode;
 import io.crate.expression.symbol.DynamicReference;
 import io.crate.expression.symbol.RefReplacer;
-import io.crate.expression.symbol.RefVisitor;
 import io.crate.expression.symbol.Symbol;
-import io.crate.expression.symbol.Symbols;
-import io.crate.expression.symbol.format.Style;
 import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.GeneratedReference;
@@ -80,13 +78,17 @@ import io.crate.sql.tree.ColumnDefinition;
 import io.crate.sql.tree.ColumnPolicy;
 import io.crate.sql.tree.ColumnStorageDefinition;
 import io.crate.sql.tree.ColumnType;
+import io.crate.sql.tree.CreateForeignTable;
 import io.crate.sql.tree.CreateTable;
+import io.crate.sql.tree.DefaultConstraint;
 import io.crate.sql.tree.DefaultTraversalVisitor;
 import io.crate.sql.tree.Expression;
+import io.crate.sql.tree.GeneratedExpressionConstraint;
 import io.crate.sql.tree.GenericProperties;
 import io.crate.sql.tree.IndexColumnConstraint;
 import io.crate.sql.tree.IndexDefinition;
 import io.crate.sql.tree.NotNullColumnConstraint;
+import io.crate.sql.tree.NullColumnConstraint;
 import io.crate.sql.tree.ObjectColumnType;
 import io.crate.sql.tree.PartitionedBy;
 import io.crate.sql.tree.PrimaryKeyColumnConstraint;
@@ -178,7 +180,7 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
         this.toSymbol = x -> expressionAnalyzer.convert(x, expressionContext);
     }
 
-    static class RefBuilder {
+    public static class RefBuilder {
 
         private final ColumnIdent name;
         private DataType<?> type;
@@ -190,6 +192,9 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
         private boolean nullable = true;
         private GenericProperties<Symbol> indexProperties = GenericProperties.empty();
         private boolean primaryKey;
+        @Nullable
+        private String pkConstraintName;
+        private boolean explicitNullable;
         private Symbol generated;
         private Symbol defaultExpression;
         private GenericProperties<Symbol> storageProperties = GenericProperties.empty();
@@ -201,18 +206,27 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
          **/
         private Reference builtReference;
 
-        public RefBuilder(ColumnIdent name, DataType<?> type) {
+        RefBuilder(ColumnIdent name, DataType<?> type) {
             this.name = name;
             this.type = type;
+        }
+
+        @Nullable
+        public String pkConstraintName() {
+            return pkConstraintName;
         }
 
         public boolean isPrimaryKey() {
             return primaryKey;
         }
 
+        public boolean isExplicitlyNull() {
+            return explicitNullable;
+        }
+
         public Reference build(Map<ColumnIdent, RefBuilder> columns,
                                RelationName tableName,
-                               Function<Symbol, Symbol> bindParameter,
+                               UnaryOperator<Symbol> bindParameter,
                                Function<Symbol, Object> toValue) {
             if (builtReference != null) {
                 return builtReference;
@@ -235,14 +249,14 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
                 defaultExpression = bindParameter.apply(defaultExpression);
             }
 
-            if (!indexSources.isEmpty() || indexType == IndexType.FULLTEXT || indexProperties.properties().containsKey("analyzer")) {
+            if (!indexSources.isEmpty() || indexType == IndexType.FULLTEXT || indexProperties.contains("analyzer")) {
                 List<Reference> sources = new ArrayList<>(indexSources.size());
                 for (Symbol indexSource : indexSources) {
                     if (!ArrayType.unnest(indexSource.valueType()).equals(DataTypes.STRING)) {
                         throw new IllegalArgumentException(String.format(
                             Locale.ENGLISH,
                             "INDEX source columns require `string` types. Cannot use `%s` (%s) as source for `%s`",
-                            Symbols.pathFromSymbol(indexSource),
+                            indexSource.toColumn(),
                             indexSource.valueType().getName(),
                             name
                             ));
@@ -264,7 +278,6 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
                     refIdent,
                     rowGranularity,
                     type,
-                    columnPolicy,
                     indexType,
                     nullable,
                     hasDocValues,
@@ -275,14 +288,13 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
                     sources,
                     analyzer == null ? (indexType == IndexType.PLAIN ? "keyword" : "standard") : analyzer
                 );
-            } else if (type.id() == GeoShapeType.ID) {
+            } else if (ArrayType.unnest(type).id() == GeoShapeType.ID) {
                 Map<String, Object> geoMap = new HashMap<>();
                 GeoSettingsApplier.applySettings(geoMap, indexProperties.map(toValue), indexMethod);
                 Float distError = (Float) geoMap.get("distance_error_pct");
                 ref = new GeoReference(
                     refIdent,
                     type,
-                    columnPolicy,
                     indexType,
                     nullable,
                     position,
@@ -299,7 +311,6 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
                     refIdent,
                     rowGranularity,
                     type,
-                    columnPolicy,
                     indexType,
                     nullable,
                     hasDocValues,
@@ -320,7 +331,7 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
                     }
                     return x;
                 });
-                ref = new GeneratedReference(ref, generated.toString(Style.UNQUALIFIED), generated);
+                ref = new GeneratedReference(ref, generated);
             }
 
             builtReference = ref;
@@ -334,8 +345,8 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
             if (generated != null) {
                 consumer.accept(generated);
             }
-            indexProperties.properties().values().forEach(consumer);
-            storageProperties.properties().values().forEach(consumer);
+            indexProperties.forValues(consumer);
+            storageProperties.forValues(consumer);
         }
     }
 
@@ -372,10 +383,16 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
         }
         GenericProperties<Symbol> properties = createTable.properties().map(toSymbol);
         Optional<ClusteredBy<Symbol>> clusteredBy = createTable.clusteredBy().map(x -> x.map(toSymbol));
-
-        Optional<PartitionedBy<Symbol>> partitionedBy = createTable.partitionedBy().map(x -> x.map(toSymbol));
+        Function<Expression, Reference> toRef = x -> {
+            Symbol symbol = toSymbol.apply(x);
+            if (symbol instanceof Reference ref) {
+                return ref;
+            }
+            throw new IllegalArgumentException("Expression must be a column: " + x);
+        };
+        Optional<PartitionedBy<Reference>> partitionedBy = createTable.partitionedBy().map(x -> x.map(toRef));
         partitionedBy.ifPresent(p -> p.columns().forEach(partitionColumn -> {
-            ColumnIdent partitionColumnIdent = Symbols.pathFromSymbol(partitionColumn);
+            ColumnIdent partitionColumnIdent = partitionColumn.toColumn();
             RefBuilder column = columns.get(partitionColumnIdent);
             if (column == null) {
                 throw new ColumnUnknownException(partitionColumnIdent, tableName);
@@ -393,6 +410,28 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
             properties,
             partitionedBy,
             clusteredBy
+        );
+    }
+
+    public AnalyzedCreateForeignTable analyze(CreateForeignTable createTable) {
+        for (var tableElement : createTable.tableElements()) {
+            tableElement.accept(peekColumns, null);
+        }
+        for (var tableElement : createTable.tableElements()) {
+            tableElement.accept(columnAnalyzer, null);
+        }
+        HashMap<String, Symbol> options = HashMap.newHashMap(createTable.options().size());
+        for (var entry : createTable.options().entrySet()) {
+            String name = entry.getKey();
+            Expression value = entry.getValue();
+            options.put(name, expressionAnalyzer.convert(value, expressionContext));
+        }
+        return new AnalyzedCreateForeignTable(
+            tableName,
+            createTable.ifNotExists(),
+            columns,
+            createTable.server(),
+            options
         );
     }
 
@@ -439,7 +478,7 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
             ));
         }
         clusteredBy.flatMap(ClusteredBy::column).ifPresent(clusteredBySymbol -> {
-            ColumnIdent clusteredByColumnIdent = Symbols.pathFromSymbol(clusteredBySymbol);
+            ColumnIdent clusteredByColumnIdent = clusteredBySymbol.toColumn();
             if (partitionColumnIdent.equals(clusteredByColumnIdent)) {
                 throw new IllegalArgumentException("Cannot use CLUSTERED BY column `" + clusteredByColumnIdent + "` in PARTITIONED BY clause");
             }
@@ -469,7 +508,7 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
             resolveMissing = true;
             Symbol columnSymbol = expressionAnalyzer.convert(name, expressionContext);
             resolveMissing = false;
-            ColumnIdent columnName = Symbols.pathFromSymbol(columnSymbol);
+            ColumnIdent columnName = columnSymbol.toColumn();
             for (ColumnIdent parent : columnName.parents()) {
                 Reference parentRef = table.getReference(parent);
                 if (parentRef != null) {
@@ -530,34 +569,16 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
         public Void visitColumnDefinition(ColumnDefinition<?> node, ColumnIdent parent) {
             ColumnDefinition<Expression> columnDefinition = (ColumnDefinition<Expression>) node;
             ColumnIdent columnName = parent == null
-                ? new ColumnIdent(columnDefinition.ident())
+                ? ColumnIdent.of(columnDefinition.ident())
                 : ColumnIdent.getChildSafe(parent, columnDefinition.ident());
             RefBuilder builder = columns.get(columnName);
 
-            Expression defaultExpression = columnDefinition.defaultExpression();
-            if (defaultExpression != null) {
-                if (builder.type.id() == ObjectType.ID) {
-                    throw new IllegalArgumentException("Default values are not allowed for object columns: " + columnName);
-                }
-                Symbol defaultSymbol = expressionAnalyzer.convert(defaultExpression, expressionContext);
-                builder.defaultExpression = defaultSymbol.cast(builder.type, CastMode.IMPLICIT);
-                // only used to validate; result is not used to preserve functions like `current_timestamp`
-                normalizer.normalize(builder.defaultExpression, txnCtx);
-                RefVisitor.visitRefs(builder.defaultExpression, x -> {
-                    throw new UnsupportedOperationException(
-                        "Cannot reference columns in DEFAULT expression of `" + columnName + "`. " +
-                        "Maybe you wanted to use a string literal with single quotes instead: '" + x.column().name() + "'");
-                });
-                EnsureNoMatchPredicate.ensureNoMatchPredicate(defaultSymbol, "Cannot use MATCH in CREATE TABLE statements");
-            }
-
-            setGeneratedExpression(builder, columnDefinition.generatedExpression());
             for (var constraint : columnDefinition.constraints()) {
                 processConstraint(builder, constraint);
             }
 
             ColumnType<Expression> type = columnDefinition.type();
-            while (type instanceof CollectionColumnType collectionColumnType) {
+            while (type instanceof CollectionColumnType<Expression> collectionColumnType) {
                 type = collectionColumnType.innerType();
             }
             if (type instanceof ObjectColumnType<Expression> objectColumnType) {
@@ -568,21 +589,6 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
             }
 
             return null;
-        }
-
-        private void setGeneratedExpression(RefBuilder builder, @Nullable Expression generatedExpression) {
-            if (generatedExpression == null) {
-                return;
-            }
-            builder.generated = expressionAnalyzer.convert(generatedExpression, expressionContext);
-            EnsureNoMatchPredicate.ensureNoMatchPredicate(builder.generated, "Cannot use MATCH in CREATE TABLE statements");
-            if (builder.type == DataTypes.UNDEFINED) {
-                builder.type = builder.generated.valueType();
-            } else {
-                builder.generated = builder.generated.cast(builder.type, CastMode.IMPLICIT);
-            }
-            // only used to validate; result is not used to preserve functions like `current_timestamp`
-            normalizer.normalize(builder.generated, txnCtx);
         }
 
         private void processConstraint(RefBuilder builder, ColumnConstraint<Expression> constraint) {
@@ -619,8 +625,54 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
                 }
             } else if (constraint instanceof NotNullColumnConstraint<Expression>) {
                 builder.nullable = false;
-            } else if (constraint instanceof PrimaryKeyColumnConstraint<Expression>) {
-                markAsPrimaryKey(builder);
+                if (builder.explicitNullable) {
+                    throw new IllegalArgumentException(String.format(Locale.ENGLISH,
+                        "Column \"%s\" is declared NULL, therefore, cannot be declared NOT NULL", columnName));
+                }
+            } else if (constraint instanceof PrimaryKeyColumnConstraint<Expression> primaryKeyColumnConstraint) {
+                markAsPrimaryKey(builder, primaryKeyColumnConstraint.constraintName());
+            } else if (constraint instanceof NullColumnConstraint<Expression>) {
+                builder.explicitNullable = true;
+                if (builder.primaryKey) {
+                    throw new IllegalArgumentException(String.format(Locale.ENGLISH,
+                        "Column \"%s\" is declared as PRIMARY KEY, therefore, cannot be declared NULL", columnName));
+                }
+                if (!builder.nullable) {
+                    throw new IllegalArgumentException(String.format(Locale.ENGLISH,
+                        "Column \"%s\" is declared as NOT NULL, therefore, cannot be declared NULL", columnName));
+                }
+            } else if (constraint instanceof DefaultConstraint<Expression> defaultConstraint) {
+                Expression defaultExpression = defaultConstraint.expression();
+                if (defaultExpression != null) {
+                    if (builder.type.id() == ObjectType.ID) {
+                        throw new IllegalArgumentException("Default values are not allowed for object columns: " + columnName);
+                    }
+                    Symbol defaultSymbol = expressionAnalyzer.convert(defaultExpression, expressionContext);
+                    builder.defaultExpression = defaultSymbol.cast(builder.type, CastMode.IMPLICIT);
+                    // only used to validate; result is not used to preserve functions like `current_timestamp`
+                    normalizer.normalize(builder.defaultExpression, txnCtx);
+                    builder.defaultExpression.visit(Reference.class, x -> {
+                        throw new UnsupportedOperationException(
+                            "Cannot reference columns in DEFAULT expression of `" + columnName + "`. " +
+                                "Maybe you wanted to use a string literal with single quotes instead: '" + x.column().name() + "'");
+                    });
+                    EnsureNoMatchPredicate.ensureNoMatchPredicate(defaultSymbol, "Cannot use MATCH in CREATE TABLE statements");
+                }
+            } else if (constraint instanceof GeneratedExpressionConstraint<Expression> generatedExpressionConstraint) {
+                Expression generatedExpression = generatedExpressionConstraint.expression();
+                if (generatedExpression != null) {
+                    builder.generated = expressionAnalyzer.convert(generatedExpression, expressionContext);
+                    EnsureNoMatchPredicate.ensureNoMatchPredicate(builder.generated, "Cannot use MATCH in CREATE TABLE statements");
+                    if (builder.type == DataTypes.UNDEFINED) {
+                        builder.type = builder.generated.valueType();
+                    } else {
+                        builder.generated = builder.generated.cast(builder.type, CastMode.IMPLICIT);
+                    }
+                    // only used to validate; result is not used to preserve functions like `current_timestamp`
+                    normalizer.normalize(builder.generated, txnCtx);
+                }
+            } else {
+                throw new UnsupportedOperationException("constraint not supported: " + constraint);
             }
         }
 
@@ -630,10 +682,9 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
             assert parent == null : "ADD COLUMN doesn't allow parents";
             AddColumnDefinition<Expression> columnDefinition = (AddColumnDefinition<Expression>) node;
             Expression name = columnDefinition.name();
-            ColumnIdent columnName = Symbols.pathFromSymbol(expressionAnalyzer.convert(name, expressionContext));
+            ColumnIdent columnName = expressionAnalyzer.convert(name, expressionContext).toColumn();
             RefBuilder builder = columns.get(columnName);
 
-            setGeneratedExpression(builder, columnDefinition.generatedExpression());
             for (var constraint : columnDefinition.constraints()) {
                 processConstraint(builder, constraint);
             }
@@ -659,12 +710,12 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
 
             for (Expression pk : pkColumns) {
                 Symbol pkColumn = toSymbol.apply(pk);
-                ColumnIdent columnIdent = Symbols.pathFromSymbol(pkColumn);
+                ColumnIdent columnIdent = pkColumn.toColumn();
                 RefBuilder column = columns.get(columnIdent);
                 if (column == null) {
                     throw new ColumnUnknownException(columnIdent, tableName);
                 }
-                markAsPrimaryKey(column);
+                markAsPrimaryKey(column, pkConstraint.constraintName());
             }
 
             return null;
@@ -675,11 +726,11 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
         public Void visitIndexDefinition(IndexDefinition<?> node, ColumnIdent parent) {
             IndexDefinition<Expression> indexDefinition = (IndexDefinition<Expression>) node;
             String name = indexDefinition.ident();
-            ColumnIdent columnIdent = parent == null ? new ColumnIdent(name) : ColumnIdent.getChildSafe(parent, name);
+            ColumnIdent columnIdent = parent == null ? ColumnIdent.of(name) : ColumnIdent.getChildSafe(parent, name);
             RefBuilder builder = columns.get(columnIdent);
             builder.indexMethod = indexDefinition.method();
             builder.indexProperties = indexDefinition.properties().map(toSymbol);
-            builder.indexSources = Lists2.map(indexDefinition.columns(), toSymbol);
+            builder.indexSources = Lists.map(indexDefinition.columns(), toSymbol);
             builder.indexType = IndexType.of(builder.indexMethod);
             return null;
         }
@@ -702,7 +753,7 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
         }
         var analyzedCheck = new AnalyzedCheck(expression, expressionSymbol, null);
         if (column != null) {
-            RefVisitor.visitRefs(expressionSymbol, ref -> {
+            expressionSymbol.visit(Reference.class, ref -> {
                 if (!ref.column().equals(column)) {
                     throw new UnsupportedOperationException(
                         "CHECK constraint on column `" + column + "` cannot refer to column `" + ref.column() +
@@ -729,8 +780,14 @@ public class TableElementsAnalyzer implements FieldProvider<Reference> {
         return sb.toString();
     }
 
-    private void markAsPrimaryKey(RefBuilder column) {
+    private void markAsPrimaryKey(RefBuilder column, @Nullable String pkConstraintName) {
+        if (column.explicitNullable) {
+            throw new IllegalArgumentException(String.format(Locale.ENGLISH,
+                "Column \"%s\" is declared NULL, therefore, cannot be declared as a PRIMARY KEY", column.name));
+        }
+        column.pkConstraintName = pkConstraintName;
         column.primaryKey = true;
+        column.nullable = false;
         ColumnIdent columnName = column.name;
         DataType<?> type = column.type;
         if (type instanceof ArrayType) {

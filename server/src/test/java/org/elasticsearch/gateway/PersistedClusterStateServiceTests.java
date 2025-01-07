@@ -18,15 +18,8 @@
  */
 package org.elasticsearch.gateway;
 
-import static io.crate.testing.Asserts.assertThat;
-import static org.hamcrest.Matchers.allOf;
-import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.lessThan;
-import static org.hamcrest.Matchers.nullValue;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOError;
 import java.io.IOException;
@@ -74,15 +67,21 @@ import org.elasticsearch.indices.breaker.NoneCircuitBreakerService;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.test.MockLogAppender;
 import org.elasticsearch.test.junit.annotations.TestLogging;
+import org.junit.Test;
 
 import io.crate.common.io.IOUtils;
 
 public class PersistedClusterStateServiceTests extends ESTestCase {
 
     private PersistedClusterStateService newPersistedClusterStateService(NodeEnvironment nodeEnvironment) {
-        return new PersistedClusterStateService(nodeEnvironment, xContentRegistry(), getBigArrays(),
+        return new PersistedClusterStateService(
+            nodeEnvironment,
+            xContentRegistry(),
+            writableRegistry(),
+            getBigArrays(),
             new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS),
-            () -> 0L);
+            () -> 0L
+        );
     }
 
     public void testPersistsAndReloadsTerm() throws IOException {
@@ -90,13 +89,13 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
             final PersistedClusterStateService persistedClusterStateService = newPersistedClusterStateService(nodeEnvironment);
             final long newTerm = randomNonNegativeLong();
 
-            assertThat(persistedClusterStateService.loadBestOnDiskState().currentTerm, equalTo(0L));
+            assertThat(persistedClusterStateService.loadBestOnDiskState().currentTerm).isEqualTo(0L);
             try (Writer writer = persistedClusterStateService.createWriter()) {
                 writer.writeFullStateAndCommit(newTerm, ClusterState.EMPTY_STATE);
-                assertThat(persistedClusterStateService.loadBestOnDiskState().currentTerm, equalTo(newTerm));
+                assertThat(persistedClusterStateService.loadBestOnDiskState().currentTerm).isEqualTo(newTerm);
             }
 
-            assertThat(persistedClusterStateService.loadBestOnDiskState().currentTerm, equalTo(newTerm));
+            assertThat(persistedClusterStateService.loadBestOnDiskState().currentTerm).isEqualTo(newTerm);
         }
     }
 
@@ -115,9 +114,9 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
                                   .version(version))
                     .incrementVersion().build());
                 clusterState = loadPersistedClusterState(persistedClusterStateService);
-                assertThat(clusterState.metadata().clusterUUID(), equalTo(clusterUUID));
-                assertTrue(clusterState.metadata().clusterUUIDCommitted());
-                assertThat(clusterState.metadata().version(), equalTo(version));
+                assertThat(clusterState.metadata().clusterUUID()).isEqualTo(clusterUUID);
+                assertThat(clusterState.metadata().clusterUUIDCommitted()).isTrue();
+                assertThat(clusterState.metadata().version()).isEqualTo(version);
             }
 
             try (Writer writer = persistedClusterStateService.createWriter()) {
@@ -130,9 +129,9 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
             }
 
             clusterState = loadPersistedClusterState(persistedClusterStateService);
-            assertThat(clusterState.metadata().clusterUUID(), equalTo(clusterUUID));
-            assertTrue(clusterState.metadata().clusterUUIDCommitted());
-            assertThat(clusterState.metadata().version(), equalTo(version + 1));
+            assertThat(clusterState.metadata().clusterUUID()).isEqualTo(clusterUUID);
+            assertThat(clusterState.metadata().clusterUUIDCommitted()).isTrue();
+            assertThat(clusterState.metadata().version()).isEqualTo(version + 1);
         }
     }
 
@@ -181,11 +180,12 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
         try (NodeEnvironment nodeEnvironment = newNodeEnvironment(dataPaths)) {
             final PersistedClusterStateService.OnDiskState onDiskState = newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState();
             final ClusterState clusterState = clusterStateFromMetadata(onDiskState.lastAcceptedVersion, onDiskState.metadata);
-            assertThat(clusterState.term(), equalTo(freshTerm));
-            assertThat(clusterState.version(), equalTo(freshVersion));
+            assertThat(clusterState.term()).isEqualTo(freshTerm);
+            assertThat(clusterState.version()).isEqualTo(freshVersion);
         }
     }
 
+    @Test
     public void testFailsOnMismatchedNodeIds() throws IOException {
         final Path[] dataPaths1 = createDataPaths();
         final Path[] dataPaths2 = createDataPaths();
@@ -217,12 +217,18 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
         final Path[] combinedPaths = Stream.concat(Arrays.stream(dataPaths1), Arrays.stream(dataPaths2)).toArray(Path[]::new);
 
         try (NodeEnvironment nodeEnvironment = newNodeEnvironment(combinedPaths)) {
-            final String message = expectThrows(IllegalStateException.class, () -> newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState()).getMessage();
-            assertThat(message, allOf(containsString("unexpected node ID in metadata"), containsString(nodeIds[0])));
-            assertTrue("[" + message + "] should match " + Arrays.toString(dataPaths2), Arrays.stream(dataPaths2).anyMatch(p -> message.contains(p.toString())));
+            assertThatThrownBy(() -> newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState())
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessageContainingAll(
+                    "unexpected node ID in metadata",
+                    nodeIds[0]
+                )
+                .as("Message should match: " + Arrays.toString(dataPaths2))
+                .satisfies(t -> Arrays.stream(dataPaths2).anyMatch(p -> t.getMessage().contains(p.toString())));
         }
     }
 
+    @Test
     public void testFailsOnMismatchedCommittedClusterUUIDs() throws IOException {
         final Path[] dataPaths1 = createDataPaths();
         final Path[] dataPaths2 = createDataPaths();
@@ -235,7 +241,7 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
         try (NodeEnvironment nodeEnvironment = newNodeEnvironment(combinedPaths)) {
             try (Writer writer = newPersistedClusterStateService(nodeEnvironment).createWriter()) {
                 final ClusterState clusterState = loadPersistedClusterState(newPersistedClusterStateService(nodeEnvironment));
-                assertFalse(clusterState.metadata().clusterUUIDCommitted());
+                assertThat(clusterState.metadata().clusterUUIDCommitted()).isFalse();
                 writer.writeFullStateAndCommit(0L, clusterState);
             }
         }
@@ -243,7 +249,7 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
         try (NodeEnvironment nodeEnvironment = newNodeEnvironment(dataPaths1)) {
             try (Writer writer = newPersistedClusterStateService(nodeEnvironment).createWriter()) {
                 final ClusterState clusterState = loadPersistedClusterState(newPersistedClusterStateService(nodeEnvironment));
-                assertFalse(clusterState.metadata().clusterUUIDCommitted());
+                assertThat(clusterState.metadata().clusterUUIDCommitted()).isFalse();
                 writer.writeFullStateAndCommit(0L, ClusterState.builder(clusterState)
                     .metadata(Metadata.builder(clusterState.metadata())
                                   .clusterUUID(clusterUUID1)
@@ -256,7 +262,7 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
         try (NodeEnvironment nodeEnvironment = newNodeEnvironment(dataPaths2)) {
             try (Writer writer = newPersistedClusterStateService(nodeEnvironment).createWriter()) {
                 final ClusterState clusterState = loadPersistedClusterState(newPersistedClusterStateService(nodeEnvironment));
-                assertFalse(clusterState.metadata().clusterUUIDCommitted());
+                assertThat(clusterState.metadata().clusterUUIDCommitted()).isFalse();
                 writer.writeFullStateAndCommit(0L, ClusterState.builder(clusterState)
                     .metadata(Metadata.builder(clusterState.metadata())
                                   .clusterUUID(clusterUUID2)
@@ -267,14 +273,16 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
         }
 
         try (NodeEnvironment nodeEnvironment = newNodeEnvironment(combinedPaths)) {
-            final String message = expectThrows(IllegalStateException.class,
-                                                () -> newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState()).getMessage();
-            assertThat(message,
-                       allOf(containsString("mismatched cluster UUIDs in metadata"), containsString(clusterUUID1), containsString(clusterUUID2)));
-            assertTrue("[" + message + "] should match " + Arrays.toString(dataPaths1),
-                       Arrays.stream(dataPaths1).anyMatch(p -> message.contains(p.toString())));
-            assertTrue("[" + message + "] should match " + Arrays.toString(dataPaths2),
-                       Arrays.stream(dataPaths2).anyMatch(p -> message.contains(p.toString())));
+            assertThatThrownBy(() -> newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState())
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessageContainingAll(
+                    "mismatched cluster UUIDs in metadata",
+                    clusterUUID1,
+                    clusterUUID2)
+                .as("Message should match " + Arrays.toString(dataPaths1))
+                .satisfies(t -> Arrays.stream(dataPaths1).anyMatch(p -> t.getMessage().contains(p.toString())))
+                .as("Message should match " + Arrays.toString(dataPaths2))
+                .satisfies(t -> Arrays.stream(dataPaths2).anyMatch(p -> t.getMessage().contains(p.toString())));
         }
     }
 
@@ -294,7 +302,7 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
         try (NodeEnvironment nodeEnvironment = newNodeEnvironment(combinedPaths)) {
             try (Writer writer = newPersistedClusterStateService(nodeEnvironment).createWriter()) {
                 final ClusterState clusterState = loadPersistedClusterState(newPersistedClusterStateService(nodeEnvironment));
-                assertFalse(clusterState.metadata().clusterUUIDCommitted());
+                assertThat(clusterState.metadata().clusterUUIDCommitted()).isFalse();
                 writeState(writer, staleCurrentTerm, ClusterState.builder(clusterState)
                                .metadata(Metadata.builder(clusterState.metadata()).version(1)
                                              .coordinationMetadata(CoordinationMetadata.builder(clusterState.coordinationMetadata()).term(staleTerm).build()))
@@ -325,25 +333,25 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
         }
 
         try (NodeEnvironment nodeEnvironment = newNodeEnvironment(combinedPaths)) {
-            final String message = expectThrows(IllegalStateException.class,
-                                                () -> newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState()).getMessage();
-            assertThat(message, allOf(
-                containsString("inconsistent terms found"),
-                containsString(Long.toString(staleCurrentTerm)),
-                containsString(Long.toString(freshCurrentTerm))));
-            assertTrue("[" + message + "] should match " + Arrays.toString(dataPaths1),
-                       Arrays.stream(dataPaths1).anyMatch(p -> message.contains(p.toString())));
-            assertTrue("[" + message + "] should match " + Arrays.toString(dataPaths2),
-                       Arrays.stream(dataPaths2).anyMatch(p -> message.contains(p.toString())));
+            assertThatThrownBy(() -> newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState())
+                .hasMessageContainingAll(
+                    "inconsistent terms found",
+                    Long.toString(staleCurrentTerm),
+                    Long.toString(freshCurrentTerm))
+                .as("Message should match " + Arrays.toString(dataPaths1))
+                .satisfies(t -> Arrays.stream(dataPaths1).anyMatch(p -> t.getMessage().contains(p.toString())))
+                .as("Message should match " + Arrays.toString(dataPaths2))
+                .satisfies(t -> Arrays.stream(dataPaths2).anyMatch(p -> t.getMessage().contains(p.toString())));
         }
     }
 
+    @Test
     public void testFailsGracefullyOnExceptionDuringFlush() throws IOException {
         final AtomicBoolean throwException = new AtomicBoolean();
 
         try (NodeEnvironment nodeEnvironment = newNodeEnvironment(createDataPaths())) {
             final PersistedClusterStateService persistedClusterStateService
-                = new PersistedClusterStateService(nodeEnvironment, xContentRegistry(), getBigArrays(),
+                = new PersistedClusterStateService(nodeEnvironment, xContentRegistry(), writableRegistry(), getBigArrays(),
                 new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), () -> 0L) {
                 @Override
                 Directory createDirectory(Path path) throws IOException {
@@ -369,9 +377,9 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
                                   .version(randomLongBetween(1L, Long.MAX_VALUE)))
                     .incrementVersion().build();
                 throwException.set(true);
-                assertThat(expectThrows(IOException.class, () ->
-                               writeState(writer, newTerm, newState, clusterState)).getMessage(),
-                           containsString("simulated"));
+                assertThatThrownBy(() -> writeState(writer, newTerm, newState, clusterState))
+                    .isExactlyInstanceOf(IOException.class)
+                    .hasMessageContaining("simulated");
             }
         }
     }
@@ -381,7 +389,7 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
 
         try (NodeEnvironment nodeEnvironment = newNodeEnvironment(createDataPaths())) {
             final PersistedClusterStateService persistedClusterStateService
-                = new PersistedClusterStateService(nodeEnvironment, xContentRegistry(), getBigArrays(),
+                = new PersistedClusterStateService(nodeEnvironment, xContentRegistry(), writableRegistry(), getBigArrays(),
                 new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), () -> 0L) {
                 @Override
                 Directory createDirectory(Path path) throws IOException {
@@ -404,15 +412,15 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
                                   .version(randomLongBetween(1L, Long.MAX_VALUE)))
                     .incrementVersion().build();
                 throwException.set(true);
-                assertThat(expectThrows(OutOfMemoryError.class, () -> {
-                               if (randomBoolean()) {
-                                   writeState(writer, newTerm, newState, clusterState);
-                               } else {
-                                   writer.commit(newTerm, newState.version());
-                               }
-                           }).getMessage(),
-                           containsString("simulated"));
-                assertFalse(writer.isOpen());
+                assertThatThrownBy(() -> {
+                    if (randomBoolean()) {
+                        writeState(writer, newTerm, newState, clusterState);
+                    } else {
+                        writer.commit(newTerm, newState.version());
+                    }
+                }).isExactlyInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("simulated");
+                assertThat(writer.isOpen()).isFalse();
             }
 
             // check if we can open writer again
@@ -427,7 +435,7 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
 
         try (NodeEnvironment nodeEnvironment = newNodeEnvironment(createDataPaths())) {
             final PersistedClusterStateService persistedClusterStateService
-                = new PersistedClusterStateService(nodeEnvironment, xContentRegistry(), getBigArrays(),
+                = new PersistedClusterStateService(nodeEnvironment, xContentRegistry(), writableRegistry(), getBigArrays(),
                 new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), () -> 0L) {
                 @Override
                 Directory createDirectory(Path path) throws IOException {
@@ -452,15 +460,15 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
                                   .version(randomLongBetween(1L, Long.MAX_VALUE)))
                     .incrementVersion().build();
                 throwException.set(true);
-                assertThat(expectThrows(IOError.class, () -> {
-                               if (randomBoolean()) {
-                                   writeState(writer, newTerm, newState, clusterState);
-                               } else {
-                                   writer.commit(newTerm, newState.version());
-                               }
-                           }).getMessage(),
-                           containsString("simulated"));
-                assertFalse(writer.isOpen());
+                assertThatThrownBy(() -> {
+                    if (randomBoolean()) {
+                        writeState(writer, newTerm, newState, clusterState);
+                    } else {
+                        writer.commit(newTerm, newState.version());
+                    }
+                }).isExactlyInstanceOf(IOError.class)
+                    .hasMessageContaining("simulated");
+                assertThat(writer.isOpen()).isFalse();
             }
 
             // check if we can open writer again
@@ -470,6 +478,7 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
         }
     }
 
+    @Test
     public void testFailsIfGlobalMetadataIsMissing() throws IOException {
         // if someone attempted surgery on the metadata index by hand, e.g. deleting broken segments, then maybe the global metadata
         // isn't there any more
@@ -490,12 +499,13 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
                 }
             }
 
-            final String message = expectThrows(IllegalStateException.class,
-                                                () -> newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState()).getMessage();
-            assertThat(message, allOf(containsString("no global metadata found"), containsString(brokenPath.toString())));
+            assertThatThrownBy(() -> newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState())
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessageContainingAll("no global metadata found", brokenPath.toString());
         }
     }
 
+    @Test
     public void testFailsIfGlobalMetadataIsDuplicated() throws IOException {
         // if someone attempted surgery on the metadata index by hand, e.g. deleting broken segments, then maybe the global metadata
         // is duplicated
@@ -521,12 +531,16 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
                 }
             }
 
-            final String message = expectThrows(IllegalStateException.class,
-                                                () -> newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState()).getMessage();
-            assertThat(message, allOf(containsString("duplicate global metadata found"), containsString(brokenPath.toString())));
+            assertThatThrownBy(() -> newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState())
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessageContainingAll(
+                    "duplicate global metadata found",
+                    brokenPath.toString()
+                );
         }
     }
 
+    @Test
     public void testFailsIfIndexMetadataIsDuplicated() throws IOException {
         // if someone attempted surgery on the metadata index by hand, e.g. deleting broken segments, then maybe some index metadata
         // is duplicated
@@ -567,13 +581,14 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
                 }
             }
 
-            final String message = expectThrows(IllegalStateException.class,
-                                                () -> newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState()).getMessage();
-            assertThat(message, allOf(
-                containsString("duplicate metadata found"),
-                containsString(brokenPath.toString()),
-                containsString(indexName),
-                containsString(indexUUID)));
+            assertThatThrownBy(() -> newPersistedClusterStateService(nodeEnvironment).loadBestOnDiskState())
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessageContainingAll(
+                    "duplicate metadata found",
+                    brokenPath.toString(),
+                    indexName,
+                    indexUUID
+                );
         }
     }
 
@@ -606,9 +621,9 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
 
                 clusterState = loadPersistedClusterState(persistedClusterStateService);
                 IndexMetadata indexMetadata = clusterState.metadata().index("test");
-                assertThat(indexMetadata.getIndexUUID(), equalTo(indexUUID));
-                assertThat(indexMetadata.getVersion(), equalTo(indexMetadataVersion));
-                assertThat(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(indexMetadata.getSettings()), equalTo(0));
+                assertThat(indexMetadata.getIndexUUID()).isEqualTo(indexUUID);
+                assertThat(indexMetadata.getVersion()).isEqualTo(indexMetadataVersion);
+                assertThat(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(indexMetadata.getSettings())).isEqualTo(0);
                 // ensure we do not wastefully persist the same index metadata version by making a bad update with the same version
                 writer.writeIncrementalStateAndCommit(0L, clusterState, ClusterState.builder(clusterState)
                     .metadata(Metadata.builder(clusterState.metadata())
@@ -619,9 +634,9 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
 
                 clusterState = loadPersistedClusterState(persistedClusterStateService);
                 indexMetadata = clusterState.metadata().index("test");
-                assertThat(indexMetadata.getIndexUUID(), equalTo(indexUUID));
-                assertThat(indexMetadata.getVersion(), equalTo(indexMetadataVersion));
-                assertThat(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(indexMetadata.getSettings()), equalTo(0));
+                assertThat(indexMetadata.getIndexUUID()).isEqualTo(indexUUID);
+                assertThat(indexMetadata.getVersion()).isEqualTo(indexMetadataVersion);
+                assertThat(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(indexMetadata.getSettings())).isEqualTo(0);
                 // ensure that we do persist the same index metadata version by making an update with a higher version
                 writeState(writer, 0L, ClusterState.builder(clusterState)
                                .metadata(Metadata.builder(clusterState.metadata())
@@ -633,8 +648,8 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
 
                 clusterState = loadPersistedClusterState(persistedClusterStateService);
                 indexMetadata = clusterState.metadata().index("test");
-                assertThat(indexMetadata.getVersion(), equalTo(indexMetadataVersion + 1));
-                assertThat(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(indexMetadata.getSettings()), equalTo(2));
+                assertThat(indexMetadata.getVersion()).isEqualTo(indexMetadataVersion + 1);
+                assertThat(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(indexMetadata.getSettings())).isEqualTo(2);
                 // ensure that we also persist the index metadata when the term changes
                 writeState(writer, 0L, ClusterState.builder(clusterState)
                                .metadata(Metadata.builder(clusterState.metadata())
@@ -648,9 +663,9 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
 
             final ClusterState clusterState = loadPersistedClusterState(persistedClusterStateService);
             final IndexMetadata indexMetadata = clusterState.metadata().index("test");
-            assertThat(indexMetadata.getIndexUUID(), equalTo(indexUUID));
-            assertThat(indexMetadata.getVersion(), equalTo(indexMetadataVersion + 1));
-            assertThat(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(indexMetadata.getSettings()), equalTo(3));
+            assertThat(indexMetadata.getIndexUUID()).isEqualTo(indexUUID);
+            assertThat(indexMetadata.getVersion()).isEqualTo(indexMetadataVersion + 1);
+            assertThat(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(indexMetadata.getSettings())).isEqualTo(3);
         }
     }
 
@@ -709,11 +724,10 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
             try (Writer writer = persistedClusterStateService.createWriter()) {
                 final ClusterState clusterState = loadPersistedClusterState(persistedClusterStateService);
 
-                assertThat(clusterState.metadata().indices().size(), equalTo(2));
-                assertThat(clusterState.metadata().index("updated").getIndexUUID(), equalTo(updatedIndexUuid));
-                assertThat(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(clusterState.metadata().index("updated").getSettings()),
-                           equalTo(1));
-                assertThat(clusterState.metadata().index("deleted").getIndexUUID(), equalTo(deletedIndexUuid));
+                assertThat(clusterState.metadata().indices()).hasSize(2);
+                assertThat(clusterState.metadata().index("updated").getIndexUUID()).isEqualTo(updatedIndexUuid);
+                assertThat(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(clusterState.metadata().index("updated").getSettings())).isEqualTo(1);
+                assertThat(clusterState.metadata().index("deleted").getIndexUUID()).isEqualTo(deletedIndexUuid);
 
                 writeState(writer, 0L, ClusterState.builder(clusterState)
                                .metadata(Metadata.builder(clusterState.metadata())
@@ -736,12 +750,11 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
 
             final ClusterState clusterState = loadPersistedClusterState(persistedClusterStateService);
 
-            assertThat(clusterState.metadata().indices().size(), equalTo(2));
-            assertThat(clusterState.metadata().index("updated").getIndexUUID(), equalTo(updatedIndexUuid));
-            assertThat(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(clusterState.metadata().index("updated").getSettings()),
-                       equalTo(2));
-            assertThat(clusterState.metadata().index("added").getIndexUUID(), equalTo(addedIndexUuid));
-            assertThat(clusterState.metadata().index("deleted"), nullValue());
+            assertThat(clusterState.metadata().indices()).hasSize(2);
+            assertThat(clusterState.metadata().index("updated").getIndexUUID()).isEqualTo(updatedIndexUuid);
+            assertThat(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(clusterState.metadata().index("updated").getSettings())).isEqualTo(2);
+            assertThat(clusterState.metadata().index("added").getIndexUUID()).isEqualTo(addedIndexUuid);
+            assertThat(clusterState.metadata().index("deleted")).isNull();
         }
     }
 
@@ -774,7 +787,7 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
             final ClusterState clusterState = loadPersistedClusterState(persistedClusterStateService);
             for (Index index : indices) {
                 final IndexMetadata indexMetadata = clusterState.metadata().index(index.getName());
-                assertThat(indexMetadata.getIndexUUID(), equalTo(index.getUUID()));
+                assertThat(indexMetadata.getIndexUUID()).isEqualTo(index.getUUID());
             }
         }
     }
@@ -804,7 +817,7 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
         final ClusterSettings clusterSettings = new ClusterSettings(settings, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS);
         try (NodeEnvironment nodeEnvironment = newNodeEnvironment(createDataPaths())) {
             PersistedClusterStateService persistedClusterStateService = new PersistedClusterStateService(nodeEnvironment,
-                    xContentRegistry(), getBigArrays(), clusterSettings, () -> currentTime.getAndAdd(writeDurationMillis.get()));
+                    xContentRegistry(), writableRegistry(), getBigArrays(), clusterSettings, () -> currentTime.getAndAdd(writeDurationMillis.get()));
 
             try (Writer writer = persistedClusterStateService.createWriter()) {
                 assertExpectedLogs(1L, null, clusterState, writer, new MockLogAppender.SeenEventExpectation(
@@ -864,7 +877,7 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
                     Level.WARN,
                     "*"));
 
-                assertThat(currentTime.get(), lessThan(startTimeMillis + 14 * slowWriteLoggingThresholdMillis)); // ensure no overflow
+                assertThat(currentTime.get()).isLessThan(startTimeMillis + 14 * slowWriteLoggingThresholdMillis); // ensure no overflow
             }
         }
     }
@@ -893,7 +906,7 @@ public class PersistedClusterStateServiceTests extends ESTestCase {
 
     @Override
     public Settings buildEnvSettings(Settings settings) {
-        assertTrue(settings.hasValue(Environment.PATH_DATA_SETTING.getKey()));
+        assertThat(settings.hasValue(Environment.PATH_DATA_SETTING.getKey())).isTrue();
         return Settings.builder()
             .put(settings)
             .put(Environment.PATH_HOME_SETTING.getKey(), createTempDir().toAbsolutePath()).build();

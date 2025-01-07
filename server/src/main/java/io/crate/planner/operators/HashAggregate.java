@@ -29,12 +29,13 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.SequencedCollection;
 import java.util.Set;
 
 import org.jetbrains.annotations.Nullable;
 
 import io.crate.analyze.OrderBy;
-import io.crate.common.collections.Lists2;
+import io.crate.common.collections.Lists;
 import io.crate.data.Row;
 import io.crate.execution.dsl.phases.ExecutionPhases;
 import io.crate.execution.dsl.phases.MergePhase;
@@ -44,7 +45,6 @@ import io.crate.expression.symbol.AggregateMode;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.Symbol;
 import io.crate.expression.symbol.SymbolVisitor;
-import io.crate.expression.symbol.SymbolVisitors;
 import io.crate.expression.symbol.Symbols;
 import io.crate.metadata.FunctionType;
 import io.crate.metadata.IndexType;
@@ -101,8 +101,7 @@ public class HashAggregate extends ForwardingLogicalPlan {
                         aggregates,
                         paramBinder,
                         AggregateMode.ITER_PARTIAL,
-                        RowGranularity.SHARD,
-                        plannerContext.transactionContext().sessionSettings().searchPath()
+                        RowGranularity.SHARD
                     )
                 );
                 executionPlan.addProjection(
@@ -111,8 +110,7 @@ public class HashAggregate extends ForwardingLogicalPlan {
                         aggregates,
                         paramBinder,
                         AggregateMode.PARTIAL_FINAL,
-                        RowGranularity.CLUSTER,
-                        plannerContext.transactionContext().sessionSettings().searchPath()
+                        RowGranularity.CLUSTER
                     )
                 );
                 return executionPlan;
@@ -122,8 +120,7 @@ public class HashAggregate extends ForwardingLogicalPlan {
                 aggregates,
                 paramBinder,
                 AggregateMode.ITER_FINAL,
-                RowGranularity.CLUSTER,
-                plannerContext.transactionContext().sessionSettings().searchPath()
+                RowGranularity.CLUSTER
             );
             executionPlan.addProjection(fullAggregation);
             return executionPlan;
@@ -133,8 +130,7 @@ public class HashAggregate extends ForwardingLogicalPlan {
             aggregates,
             paramBinder,
             AggregateMode.ITER_PARTIAL,
-            source.preferShardProjections() ? RowGranularity.SHARD : RowGranularity.NODE,
-            plannerContext.transactionContext().sessionSettings().searchPath()
+            source.preferShardProjections() ? RowGranularity.SHARD : RowGranularity.NODE
         );
         executionPlan.addProjection(toPartial);
 
@@ -143,8 +139,7 @@ public class HashAggregate extends ForwardingLogicalPlan {
             aggregates,
             paramBinder,
             AggregateMode.PARTIAL_FINAL,
-            RowGranularity.CLUSTER,
-            plannerContext.transactionContext().sessionSettings().searchPath()
+            RowGranularity.CLUSTER
         );
         return new Merge(
             executionPlan,
@@ -179,18 +174,18 @@ public class HashAggregate extends ForwardingLogicalPlan {
 
     @Override
     public LogicalPlan replaceSources(List<LogicalPlan> sources) {
-        return new HashAggregate(Lists2.getOnlyElement(sources), aggregates);
+        return new HashAggregate(Lists.getOnlyElement(sources), aggregates);
     }
 
     @Override
-    public LogicalPlan pruneOutputsExcept(Collection<Symbol> outputsToKeep) {
+    public LogicalPlan pruneOutputsExcept(SequencedCollection<Symbol> outputsToKeep) {
         ArrayList<Function> newAggregates = new ArrayList<>();
         for (Symbol outputToKeep : outputsToKeep) {
-            SymbolVisitors.intersection(outputToKeep, aggregates, newAggregates::add);
+            Symbols.intersection(outputToKeep, aggregates, newAggregates::add);
         }
         LinkedHashSet<Symbol> toKeep = new LinkedHashSet<>();
         for (Function newAggregate : newAggregates) {
-            SymbolVisitors.intersection(newAggregate, source.outputs(), toKeep::add);
+            Symbols.intersection(newAggregate, source.outputs(), toKeep::add);
         }
         LogicalPlan newSource = source.pruneOutputsExcept(toKeep);
         if (source == newSource && newAggregates == aggregates) {
@@ -223,7 +218,7 @@ public class HashAggregate extends ForwardingLogicalPlan {
         @Override
         public Void visitFunction(Function symbol, OutputValidatorContext context) {
             context.insideAggregation =
-                context.insideAggregation || symbol.signature().getKind().equals(FunctionType.AGGREGATE);
+                context.insideAggregation || symbol.signature().getType().equals(FunctionType.AGGREGATE);
             for (Symbol argument : symbol.arguments()) {
                 argument.accept(this, context);
             }

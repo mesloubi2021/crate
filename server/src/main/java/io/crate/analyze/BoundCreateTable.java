@@ -25,56 +25,45 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.elasticsearch.common.settings.Settings;
 import org.jetbrains.annotations.Nullable;
 
 import com.carrotsearch.hppc.IntArrayList;
 
-import io.crate.common.collections.Lists2;
-import io.crate.expression.symbol.Symbol;
-import io.crate.expression.symbol.Symbols;
 import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.PartitionName;
 import io.crate.metadata.Reference;
 import io.crate.metadata.RelationName;
-import io.crate.types.DataTypes;
 
 public record BoundCreateTable(
         RelationName tableName,
+        @Nullable
+        String pkConstraintName,
         boolean ifNotExists,
         /**
          * In order of definition
          */
         Map<ColumnIdent, Reference> columns,
-        TableParameter tableParameter,
+        Settings settings,
         List<Reference> primaryKeys,
         /**
          * By constraint name; In order of definition
          **/
         Map<String, AnalyzedCheck> checks,
         ColumnIdent routingColumn,
-        List<Symbol> partitionedByColumns) {
+        List<Reference> partitionedBy) {
 
     public boolean isPartitioned() {
-        return !partitionedByColumns.isEmpty();
+        return !partitionedBy.isEmpty();
     }
 
     @Nullable
     public String templateName() {
-        return partitionedByColumns.isEmpty() ? null : PartitionName.templateName(tableName.schema(), tableName.name());
+        return partitionedBy.isEmpty() ? null : PartitionName.templateName(tableName.schema(), tableName.name());
     }
 
     public String templatePrefix() {
-        return partitionedByColumns.isEmpty() ? null : PartitionName.templatePrefix(tableName.schema(), tableName.name());
-    }
-
-    public List<List<String>> partitionedBy() {
-        return Lists2.map(partitionedByColumns, BoundCreateTable::toPartitionMapping);
-    }
-
-    private static List<String> toPartitionMapping(Symbol symbol) {
-        String fqn = Symbols.pathFromSymbol(symbol).fqn();
-        String typeMappingName = DataTypes.esMappingNameFrom(symbol.valueType().id());
-        return List.of(fqn, typeMappingName);
+        return partitionedBy.isEmpty() ? null : PartitionName.templatePrefix(tableName.schema(), tableName.name());
     }
 
     public Map<String, String> getCheckConstraints() {

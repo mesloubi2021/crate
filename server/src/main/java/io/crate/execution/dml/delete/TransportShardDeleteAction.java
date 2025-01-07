@@ -21,8 +21,6 @@
 
 package io.crate.execution.dml.delete;
 
-import static io.crate.common.exceptions.Exceptions.userFriendlyMessageInclNested;
-
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -33,6 +31,7 @@ import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.VersionType;
+import org.elasticsearch.index.engine.DocumentMissingException;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.VersionConflictEngineException;
 import org.elasticsearch.index.seqno.SequenceNumbers;
@@ -42,8 +41,8 @@ import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
+import io.crate.Constants;
 import io.crate.exceptions.JobKilledException;
-import io.crate.execution.ddl.SchemaUpdateClient;
 import io.crate.execution.dml.ShardResponse;
 import io.crate.execution.dml.TransportShardAction;
 import io.crate.execution.jobs.TasksService;
@@ -58,8 +57,7 @@ public class TransportShardDeleteAction extends TransportShardAction<ShardDelete
                                       IndicesService indicesService,
                                       TasksService tasksService,
                                       ThreadPool threadPool,
-                                      ShardStateAction shardStateAction,
-                                      SchemaUpdateClient schemaUpdateClient) {
+                                      ShardStateAction shardStateAction) {
         super(
             settings,
             ShardDeleteAction.NAME,
@@ -69,8 +67,7 @@ public class TransportShardDeleteAction extends TransportShardAction<ShardDelete
             tasksService,
             threadPool,
             shardStateAction,
-            ShardDeleteRequest::new,
-            schemaUpdateClient
+            ShardDeleteRequest::new
         );
     }
 
@@ -106,22 +103,20 @@ public class TransportShardDeleteAction extends TransportShardAction<ShardDelete
                             logger.debug("shardId={} failed to execute delete for id={}, doc not found",
                                 request.shardId(), item.id());
                         }
-                        shardResponse.add(location,
-                            new ShardResponse.Failure(
-                                item.id(),
-                                "Document not found while deleting",
-                                false));
+                        Throwable ex = new DocumentMissingException(indexShard.shardId(), Constants.DEFAULT_MAPPING_TYPE, item.id());
+                        shardResponse.add(location, item.id(), ex, false);
                     }
                 } else {
                     if (debugEnabled) {
                         logger.debug("shardId={} failed to execute delete for id={}: {}",
                             request.shardId(), item.id(), failure);
                     }
-                    shardResponse.add(location,
-                        new ShardResponse.Failure(
-                            item.id(),
-                            userFriendlyMessageInclNested(failure),
-                            (failure instanceof VersionConflictEngineException)));
+                    shardResponse.add(
+                        location,
+                        item.id(),
+                        failure,
+                        (failure instanceof VersionConflictEngineException)
+                    );
                 }
             } catch (Exception e) {
                 if (!TransportActions.isShardNotAvailableException(e)) {
@@ -131,11 +126,12 @@ public class TransportShardDeleteAction extends TransportShardAction<ShardDelete
                         logger.debug("shardId={} failed to execute delete for id={}: {}",
                                      request.shardId(), item.id(), e);
                     }
-                    shardResponse.add(location,
-                        new ShardResponse.Failure(
-                            item.id(),
-                            userFriendlyMessageInclNested(e),
-                            (e instanceof VersionConflictEngineException)));
+                    shardResponse.add(
+                        location,
+                        item.id(),
+                        e,
+                        (e instanceof VersionConflictEngineException)
+                    );
                 }
             }
         }
@@ -144,7 +140,7 @@ public class TransportShardDeleteAction extends TransportShardAction<ShardDelete
     }
 
     @Override
-    protected WriteReplicaResult<ShardDeleteRequest> processRequestItemsOnReplica(IndexShard indexShard, ShardDeleteRequest request) throws IOException {
+    protected WriteReplicaResult processRequestItemsOnReplica(IndexShard indexShard, ShardDeleteRequest request) throws IOException {
         Translog.Location translogLocation = null;
         for (ShardDeleteRequest.Item item : request.items()) {
             int location = item.location();
@@ -170,7 +166,7 @@ public class TransportShardDeleteAction extends TransportShardAction<ShardDelete
                 }
             }
         }
-        return new WriteReplicaResult<>(translogLocation, null, indexShard);
+        return new WriteReplicaResult(translogLocation, null, indexShard);
     }
 
     private Engine.DeleteResult shardDeleteOperationOnPrimary(ShardDeleteRequest.Item item, IndexShard indexShard) throws IOException {

@@ -32,10 +32,12 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
-import org.apache.lucene.document.FieldType;
+import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.TermInSetQuery;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.util.BytesRef;
@@ -49,6 +51,7 @@ import org.elasticsearch.common.xcontent.json.JsonXContent;
 import org.jetbrains.annotations.Nullable;
 
 import io.crate.Streamer;
+import io.crate.common.collections.Lists;
 import io.crate.common.unit.TimeValue;
 import io.crate.execution.dml.FulltextIndexer;
 import io.crate.execution.dml.StringIndexer;
@@ -59,9 +62,9 @@ import io.crate.metadata.RelationName;
 import io.crate.metadata.settings.SessionSettings;
 import io.crate.sql.tree.BitString;
 import io.crate.sql.tree.ColumnDefinition;
-import io.crate.sql.tree.ColumnPolicy;
 import io.crate.sql.tree.ColumnType;
 import io.crate.sql.tree.Expression;
+import io.crate.statistics.ColumnStatsSupport;
 
 public class StringType extends DataType<String> implements Streamer<String> {
 
@@ -70,52 +73,97 @@ public class StringType extends DataType<String> implements Streamer<String> {
     public static final String T = "t";
     public static final String F = "f";
 
-    private static final StorageSupport<Object> STORAGE = new StorageSupport<>(
-        true,
-        true,
-        new EqQuery<Object>() {
+    /**
+        * The default position_increment_gap is set to 100 so that phrase
+        * queries of reasonably high slop will not match across field values.
+        */
+    public static final int POSITION_INCREMENT_GAP = 100;
 
-            @Override
-            public Query termQuery(String field, Object value) {
-                return new TermQuery(new Term(field, BytesRefs.toBytesRef(value)));
+    /**
+     * We cannot use {@code EqQuery<String>} because it's also used in OptimizeQueryForSearchAfter
+     * where the value is {@link BytesRef} and not {@link String}.
+     */
+    protected static final class StringEqQuery implements EqQuery<Object> {
+
+        private final UnaryOperator<Object> preProcess;
+
+        StringEqQuery(UnaryOperator<Object> preprocess) {
+            this.preProcess = preprocess;
+        }
+
+        @Override
+        public Query termQuery(String field, Object value, boolean hasDocValues, boolean isIndexed) {
+            if (isIndexed) {
+                return new TermQuery(new Term(field, BytesRefs.toBytesRef(preProcess.apply(value))));
             }
+            if (hasDocValues) {
+                return SortedSetDocValuesField.newSlowExactQuery(
+                    field, BytesRefs.toBytesRef(preProcess.apply(value)));
+            }
+            return null;
+        }
 
-            @Override
-            public Query rangeQuery(String field,
-                                    Object lowerTerm,
-                                    Object upperTerm,
-                                    boolean includeLower,
-                                    boolean includeUpper,
-                                    boolean hasDocValues) {
+        @Override
+        public Query rangeQuery(String field,
+                                Object lowerTerm,
+                                Object upperTerm,
+                                boolean includeLower,
+                                boolean includeUpper,
+                                boolean hasDocValues,
+                                boolean isIndexed) {
+            if (isIndexed) {
                 return new TermRangeQuery(
                     field,
-                    BytesRefs.toBytesRef(lowerTerm),
-                    BytesRefs.toBytesRef(upperTerm),
+                    BytesRefs.toBytesRef(preProcess.apply(lowerTerm)),
+                    BytesRefs.toBytesRef(preProcess.apply(upperTerm)),
                     includeLower,
                     includeUpper
                 );
             }
+            if (hasDocValues) {
+                return SortedSetDocValuesField.newSlowRangeQuery(
+                    field,
+                    BytesRefs.toBytesRef(preProcess.apply(lowerTerm)),
+                    BytesRefs.toBytesRef(preProcess.apply(upperTerm)),
+                    includeLower,
+                    includeUpper
+                );
+            }
+            return null;
         }
-    ) {
 
         @Override
-        @SuppressWarnings({"rawtypes", "unchecked"})
-        public ValueIndexer<Object> valueIndexer(RelationName table,
-                                                 Reference ref,
-                                                 Function<String, FieldType> getFieldType,
-                                                 Function<ColumnIdent, Reference> getRef) {
-            FieldType fieldType = getFieldType.apply(ref.storageIdent());
-            if (fieldType == null) {
-                return (ValueIndexer) new StringIndexer(ref, fieldType);
+        public Query termsQuery(String field, List<Object> nonNullValues, boolean hasDocValues, boolean isIndexed) {
+            if (isIndexed) {
+                return new TermInSetQuery(field, nonNullValues.stream().map(
+                    c -> BytesRefs.toBytesRef(preProcess.apply(c))).toList());
             }
-            return switch (ref.indexType()) {
-                case FULLTEXT -> (ValueIndexer) new FulltextIndexer(ref, fieldType);
-                case NONE, PLAIN -> (ValueIndexer) new StringIndexer(ref, fieldType);
-            };
+            if (hasDocValues) {
+                return SortedSetDocValuesField.newSlowSetQuery(
+                    field, Lists.map(nonNullValues, c -> BytesRefs.toBytesRef(preProcess.apply(c))));
+            }
+            return null;
         }
+    }
+
+    private static final StorageSupport<Object> STORAGE = new StorageSupport<>(
+        true,
+        true,
+        new StringEqQuery(UnaryOperator.identity())) {
+
+            @Override
+            @SuppressWarnings({"rawtypes"})
+            public ValueIndexer<Object> valueIndexer(RelationName table,
+                                                     Reference ref,
+                                                     Function<ColumnIdent, Reference> getRef) {
+                return switch (ref.indexType()) {
+                    case FULLTEXT -> (ValueIndexer) new FulltextIndexer(ref);
+                    case NONE, PLAIN -> (ValueIndexer) new StringIndexer(ref);
+                };
+            }
     };
 
-    private final int lengthLimit;
+    protected final int lengthLimit;
 
     public static StringType of(List<Integer> parameters) {
         if (parameters.size() != 1) {
@@ -135,7 +183,7 @@ public class StringType extends DataType<String> implements Streamer<String> {
         return new StringType(lengthLimit);
     }
 
-    private StringType(int lengthLimit) {
+    protected StringType(int lengthLimit) {
         this.lengthLimit = lengthLimit;
     }
 
@@ -348,8 +396,7 @@ public class StringType extends DataType<String> implements Streamer<String> {
     }
 
     @Override
-    public ColumnType<Expression> toColumnType(ColumnPolicy columnPolicy,
-                                               @Nullable Supplier<List<ColumnDefinition<Expression>>> convertChildColumn) {
+    public ColumnType<Expression> toColumnType(@Nullable Supplier<List<ColumnDefinition<Expression>>> convertChildColumn) {
         if (unbound()) {
             return new ColumnType<>(getName());
         } else {
@@ -372,6 +419,14 @@ public class StringType extends DataType<String> implements Streamer<String> {
     }
 
     @Override
+    public String toString() {
+        if (unbound()) {
+            return super.toString();
+        }
+        return "text(" + lengthLimit + ")";
+    }
+
+    @Override
     public long valueBytes(String value) {
         return RamUsageEstimator.sizeOf(value);
     }
@@ -381,5 +436,10 @@ public class StringType extends DataType<String> implements Streamer<String> {
         if (!unbound()) {
             mapping.put("length_limit", lengthLimit);
         }
+    }
+
+    @Override
+    public ColumnStatsSupport<String> columnStatsSupport() {
+        return ColumnStatsSupport.singleValued(String.class, StringType.this);
     }
 }

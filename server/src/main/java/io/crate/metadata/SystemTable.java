@@ -21,6 +21,8 @@
 
 package io.crate.metadata;
 
+import static org.elasticsearch.cluster.metadata.Metadata.COLUMN_OID_UNASSIGNED;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -30,6 +32,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -53,8 +56,6 @@ import io.crate.types.ArrayType;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
 import io.crate.types.ObjectType;
-
-import static org.elasticsearch.cluster.metadata.Metadata.COLUMN_OID_UNASSIGNED;
 
 public final class SystemTable<T> implements TableInfo {
 
@@ -258,11 +259,11 @@ public final class SystemTable<T> implements TableInfo {
         }
 
         public <U> RelationBuilder<T> add(String column, DataType<U> type, Function<T, U> getProperty) {
-            return add(new Column<>(new ColumnIdent(column), type, getProperty));
+            return add(new Column<>(ColumnIdent.of(column), type, getProperty));
         }
 
         public <U> RelationBuilder<T> addNonNull(String column, DataType<U> type, Function<T, U> getProperty) {
-            return add(new Column<>(new ColumnIdent(column), type, getProperty, false));
+            return add(new Column<>(ColumnIdent.of(column), type, getProperty, false));
         }
 
         @Override
@@ -272,7 +273,7 @@ public final class SystemTable<T> implements TableInfo {
         }
 
         public RelationBuilder<T> addDynamicObject(String column, DataType<?> leafType, Function<T, Map<String, Object>> getObject) {
-            return add(new DynamicColumn<>(new ColumnIdent(column), leafType, getObject));
+            return add(new DynamicColumn<>(ColumnIdent.of(column), leafType, getObject));
         }
 
         public SystemTable<T> build() {
@@ -289,7 +290,6 @@ public final class SystemTable<T> implements TableInfo {
                         new ReferenceIdent(name, column.column),
                         RowGranularity.DOC,
                         column.type,
-                        ColumnPolicy.DYNAMIC,
                         IndexType.PLAIN,
                         column.isNullable,
                         false,
@@ -306,7 +306,6 @@ public final class SystemTable<T> implements TableInfo {
                         var ref = new DynamicReference(
                             new ReferenceIdent(name, wanted),
                             RowGranularity.DOC,
-                            ColumnPolicy.DYNAMIC,
                             position
                         );
                         ref.valueType(leafType);
@@ -327,15 +326,15 @@ public final class SystemTable<T> implements TableInfo {
         }
 
         public ObjectBuilder<T, RelationBuilder<T>> startObject(String column) {
-            return new ObjectBuilder<>(this, new ColumnIdent(column), t -> false);
+            return new ObjectBuilder<>(this, ColumnIdent.of(column), t -> false);
         }
 
         public ObjectBuilder<T, RelationBuilder<T>> startObject(String column, Predicate<T> objectIsNull) {
-            return new ObjectBuilder<>(this, new ColumnIdent(column), objectIsNull);
+            return new ObjectBuilder<>(this, ColumnIdent.of(column), objectIsNull);
         }
 
         public <U> ObjectArrayBuilder<U, T, RelationBuilder<T>> startObjectArray(String column, Function<T, ? extends Collection<U>> getItems) {
-            return new ObjectArrayBuilder<>(this, new ColumnIdent(column), getItems);
+            return new ObjectArrayBuilder<>(this, ColumnIdent.of(column), getItems);
         }
 
         public RelationBuilder<T> setPrimaryKeys(ColumnIdent ... primaryKeys) {
@@ -362,7 +361,7 @@ public final class SystemTable<T> implements TableInfo {
         }
 
         public ObjectBuilder<T, P> addDynamicObject(String column, DataType<?> leafType, Function<T, Map<String, Object>> getObject) {
-            return add(new DynamicColumn<>(baseColumn.getChild(column), leafType, getObject));
+            return add(new DynamicColumn<>(baseColumn.getChild(column), leafType, t -> Objects.requireNonNullElse(getObject.apply(t), Map.of())));
         }
 
         @Override
@@ -380,7 +379,7 @@ public final class SystemTable<T> implements TableInfo {
         }
 
         public P endObject() {
-            ObjectType.Builder typeBuilder = ObjectType.builder();
+            ObjectType.Builder typeBuilder = ObjectType.of(ColumnPolicy.DYNAMIC);
             ArrayList<Column<T, ?>> directChildren = new ArrayList<>();
             for (var col : columns) {
                 if (col.column.path().size() == baseColumn.path().size() + 1) {
@@ -393,13 +392,9 @@ public final class SystemTable<T> implements TableInfo {
             ObjectType objectType = typeBuilder.build();
             parent.add(new Column<>(baseColumn, objectType, new ObjectExpression<>(directChildren, objectIsNull)));
             for (Column<T, ?> column : columns) {
-                addColumnToParent(column);
+                parent.add(column);
             }
             return parent;
-        }
-
-        private <U> void addColumnToParent(Column<T, U> column) {
-            parent.add(new Column<>(column.column, column.type, column.getProperty));
         }
     }
 
@@ -417,7 +412,7 @@ public final class SystemTable<T> implements TableInfo {
         }
 
         public P endObjectArray() {
-            ObjectType.Builder typeBuilder = ObjectType.builder();
+            ObjectType.Builder typeBuilder = ObjectType.of(ColumnPolicy.DYNAMIC);
             ArrayList<Column<ItemType, ?>> directChildren = new ArrayList<>();
             for (var col : columns) {
                 if (col.column.path().size() == baseColumn.path().size() + 1) {

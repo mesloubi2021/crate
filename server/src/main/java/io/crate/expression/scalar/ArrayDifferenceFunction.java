@@ -35,28 +35,31 @@ import org.jetbrains.annotations.Nullable;
 
 import io.crate.data.Input;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
 import io.crate.metadata.functions.BoundSignature;
 import io.crate.metadata.functions.Signature;
+import io.crate.role.Roles;
 import io.crate.types.ArrayType;
 import io.crate.types.DataType;
 import io.crate.types.TypeSignature;
-import io.crate.user.UserLookup;
 
 class ArrayDifferenceFunction extends Scalar<List<Object>, List<Object>> {
 
     public static final String NAME = "array_difference";
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                NAME,
-                TypeSignature.parse("array(E)"),
-                TypeSignature.parse("array(E)"),
-                TypeSignature.parse("array(E)")
-            ).withTypeVariableConstraints(typeVariable("E")),
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(TypeSignature.parse("array(E)"),
+                    TypeSignature.parse("array(E)"))
+                .returnType(TypeSignature.parse("array(E)"))
+                .features(Feature.DETERMINISTIC, Feature.STRICTNULL)
+                .typeVariableConstraints(typeVariable("E"))
+                .build(),
             (signature, boundSignature) ->
                 new ArrayDifferenceFunction(
                     signature,
@@ -77,7 +80,7 @@ class ArrayDifferenceFunction extends Scalar<List<Object>, List<Object>> {
     }
 
     @Override
-    public Scalar<List<Object>, List<Object>> compile(List<Symbol> arguments, String currentUser, UserLookup userLookup) {
+    public Scalar<List<Object>, List<Object>> compile(List<Symbol> arguments, String currentUser, Roles roles) {
         Symbol symbol = arguments.get(1);
 
         if (!symbol.symbolType().isValueSymbol()) {

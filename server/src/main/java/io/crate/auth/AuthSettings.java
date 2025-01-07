@@ -21,18 +21,17 @@
 
 package io.crate.auth;
 
-import io.crate.types.DataTypes;
-import io.netty.handler.ssl.ClientAuth;
+import java.util.function.Function;
 
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
 
-import java.util.function.Function;
+import io.crate.types.DataTypes;
+import io.netty.handler.ssl.ClientAuth;
 
 public final class AuthSettings {
 
-    private AuthSettings() {
-    }
+    private AuthSettings() {}
 
     public static final Setting<Boolean> AUTH_HOST_BASED_ENABLED_SETTING = Setting.boolSetting(
         "auth.host_based.enabled",
@@ -42,6 +41,14 @@ public final class AuthSettings {
 
     public static final Setting<Settings> AUTH_HOST_BASED_CONFIG_SETTING = Setting.groupSetting(
         "auth.host_based.config.", Setting.Property.NodeScope
+    );
+
+    public static final Setting<String> AUTH_HOST_BASED_JWT_ISS_SETTING = Setting.simpleString(
+        "auth.host_based.jwt.iss", Setting.Property.NodeScope
+    );
+
+    public static final Setting<String> AUTH_HOST_BASED_JWT_AUD_SETTING = Setting.simpleString(
+        "auth.host_based.jwt.aud", Setting.Property.NodeScope
     );
 
     // Explicit generic is required for eclipse JDT, otherwise it won't compile
@@ -54,6 +61,11 @@ public final class AuthSettings {
     );
 
     public static final String HTTP_HEADER_REAL_IP = "X-Real-Ip";
+    public static final Setting<Boolean> AUTH_TRUST_HTTP_SUPPORT_X_REAL_IP = Setting.boolSetting(
+        "auth.trust.http_support_x_real_ip",
+        false,
+        Setting.Property.NodeScope
+    );
 
     public static ClientAuth resolveClientAuth(Settings settings, Protocol protocol) {
         Settings hbaSettings = AUTH_HOST_BASED_CONFIG_SETTING.get(settings);

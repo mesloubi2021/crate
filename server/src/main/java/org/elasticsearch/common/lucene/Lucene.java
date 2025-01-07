@@ -27,8 +27,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-import org.jetbrains.annotations.Nullable;
-
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.analysis.core.KeywordAnalyzer;
@@ -57,16 +55,17 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.Lock;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.Version;
-import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.index.analysis.AnalyzerScope;
 import org.elasticsearch.index.analysis.NamedAnalyzer;
+import org.jetbrains.annotations.Nullable;
 
 import io.crate.common.SuppressForbidden;
 import io.crate.common.collections.Iterables;
+import io.crate.exceptions.SQLExceptions;
 
 public class Lucene {
-    public static final String LATEST_CODEC = "Lucene95";
+    public static final String LATEST_CODEC = "Lucene912";
 
     public static final String SOFT_DELETES_FIELD = "__soft_deletes";
 
@@ -211,7 +210,7 @@ public class Lucene {
 
             @Override
             protected Object doBody(String segmentFileName) throws IOException {
-                try (IndexInput input = directory.openInput(segmentFileName, IOContext.READ)) {
+                try (IndexInput input = directory.openInput(segmentFileName, IOContext.READONCE)) {
                     CodecUtil.checksumEntireFile(input);
                 }
                 return null;
@@ -233,7 +232,7 @@ public class Lucene {
      * {@link IndexFormatTooOldException}, or {@link IndexFormatTooNewException} otherwise {@code false}.
      */
     public static boolean isCorruptionException(Throwable t) {
-        return ExceptionsHelper.unwrapCorruption(t) != null;
+        return SQLExceptions.unwrapCorruption(t) != null;
     }
 
     /**

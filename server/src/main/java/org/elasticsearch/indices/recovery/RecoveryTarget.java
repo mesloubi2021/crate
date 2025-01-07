@@ -32,7 +32,6 @@ import org.apache.lucene.index.IndexFormatTooNewException;
 import org.apache.lucene.index.IndexFormatTooOldException;
 import org.elasticsearch.Assertions;
 import org.elasticsearch.ElasticsearchException;
-import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.flush.FlushRequest;
 import org.elasticsearch.cluster.node.DiscoveryNode;
@@ -238,7 +237,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                 notifyListener(e, sendShardFailure);
             } finally {
                 try {
-                    cancellableThreads.cancel("failed recovery [" + ExceptionsHelper.stackTrace(e) + "]");
+                    cancellableThreads.cancel("failed recovery [" + Exceptions.stackTrace(e) + "]");
                 } finally {
                     // release the initial reference. recovery files will be cleaned as soon as ref count goes to zero, potentially now
                     decRef();
@@ -385,7 +384,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                     if (Assertions.ENABLED && result.getFailure() instanceof MapperException == false) {
                         throw new AssertionError("unexpected failure while replicating translog entry", result.getFailure());
                     }
-                    Exceptions.rethrowRuntimeException(failure);
+                    throw Exceptions.toRuntimeException(failure);
                 }
             }
             // update stats only after all operations completed (to ensure that mapping updates don't mess with stats)
@@ -448,7 +447,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                 } else {
                     assert indexShard.assertRetentionLeasesPersisted();
                 }
-                indexShard.maybeCheckIndex();
+                state().setStage(RecoveryState.Stage.VERIFY_INDEX);
                 state().setStage(RecoveryState.Stage.TRANSLOG);
             } catch (CorruptIndexException | IndexFormatTooNewException | IndexFormatTooOldException ex) {
                 // this is a fatal exception at this stage.

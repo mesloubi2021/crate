@@ -21,29 +21,26 @@
 
 package io.crate.blob;
 
-import io.crate.common.Hex;
+import java.io.IOException;
+import java.util.UUID;
+
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.index.shard.ShardId;
 
-import java.io.IOException;
-import java.util.UUID;
+import io.crate.common.Hex;
 
-public class PutChunkRequest extends BlobTransferRequest<PutChunkRequest> implements IPutChunkRequest {
+public class PutChunkRequest extends BlobTransferRequest<PutChunkRequest> {
 
-    private byte[] digest;
-    private long currentPos;
+    private final byte[] digest;
+    private final long currentPos;
 
     public PutChunkRequest(ShardId shardId, byte[] digest, UUID transferId,
                            BytesReference content, long currentPos, boolean last) {
         super(shardId, transferId, content, last);
         this.digest = digest;
         this.currentPos = currentPos;
-    }
-
-    public PutChunkRequest() {
-        super();
     }
 
     public String digest() {

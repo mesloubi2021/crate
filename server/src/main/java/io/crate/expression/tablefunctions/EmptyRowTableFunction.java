@@ -25,7 +25,10 @@ import java.util.List;
 
 import io.crate.data.Input;
 import io.crate.data.Row;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
+import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
 import io.crate.metadata.functions.BoundSignature;
 import io.crate.metadata.functions.Signature;
@@ -39,9 +42,13 @@ public class EmptyRowTableFunction {
 
     private static final String NAME = "empty_row";
 
-    public static void register(TableFunctionModule module) {
-        module.register(
-            Signature.table(NAME, RowType.EMPTY.getTypeSignature()),
+    public static void register(Functions.Builder builder) {
+        builder.add(
+            Signature.builder(NAME, FunctionType.TABLE)
+                .argumentTypes()
+                .returnType(RowType.EMPTY.getTypeSignature())
+                .features(Scalar.Feature.NOTNULL, Scalar.Feature.DETERMINISTIC)
+                .build(),
             EmptyRowTableFunctionImplementation::new
         );
     }

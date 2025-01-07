@@ -23,6 +23,8 @@ package io.crate.expression.scalar;
 
 import io.crate.data.Input;
 import io.crate.data.Row;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -34,15 +36,15 @@ import io.crate.types.RowType;
 public final class SubscriptRecordFunction extends Scalar<Object, Object> {
 
     public static final String NAME = "_subscript_record";
-    public static final Signature SIGNATURE = Signature.scalar(
-        NAME,
-        RowType.EMPTY.getTypeSignature(),
-        DataTypes.STRING.getTypeSignature(),
-        DataTypes.UNDEFINED.getTypeSignature()
-    );
+    public static final Signature SIGNATURE = Signature.builder(NAME, FunctionType.SCALAR)
+        .argumentTypes(RowType.EMPTY.getTypeSignature(),
+            DataTypes.STRING.getTypeSignature())
+        .returnType(DataTypes.UNDEFINED.getTypeSignature())
+        .features(Feature.DETERMINISTIC)
+        .build();
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
+    public static void register(Functions.Builder module) {
+        module.add(
             SIGNATURE,
             SubscriptRecordFunction::new
         );

@@ -44,8 +44,6 @@ import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotAct
 import org.elasticsearch.action.admin.cluster.snapshots.create.TransportCreateSnapshotAction;
 import org.elasticsearch.action.admin.cluster.snapshots.delete.DeleteSnapshotAction;
 import org.elasticsearch.action.admin.cluster.snapshots.delete.TransportDeleteSnapshotAction;
-import org.elasticsearch.action.admin.cluster.snapshots.get.GetSnapshotsAction;
-import org.elasticsearch.action.admin.cluster.snapshots.get.TransportGetSnapshotsAction;
 import org.elasticsearch.action.admin.cluster.snapshots.restore.RestoreSnapshotAction;
 import org.elasticsearch.action.admin.cluster.snapshots.restore.TransportRestoreSnapshotAction;
 import org.elasticsearch.action.admin.cluster.state.ClusterStateAction;
@@ -64,33 +62,25 @@ import org.elasticsearch.action.admin.indices.flush.TransportShardFlushAction;
 import org.elasticsearch.action.admin.indices.flush.TransportSyncedFlushAction;
 import org.elasticsearch.action.admin.indices.forcemerge.ForceMergeAction;
 import org.elasticsearch.action.admin.indices.forcemerge.TransportForceMergeAction;
-import org.elasticsearch.action.admin.indices.mapping.put.PutMappingAction;
-import org.elasticsearch.action.admin.indices.mapping.put.TransportPutMappingAction;
 import org.elasticsearch.action.admin.indices.recovery.RecoveryAction;
 import org.elasticsearch.action.admin.indices.recovery.TransportRecoveryAction;
 import org.elasticsearch.action.admin.indices.refresh.RefreshAction;
 import org.elasticsearch.action.admin.indices.refresh.TransportRefreshAction;
 import org.elasticsearch.action.admin.indices.refresh.TransportShardRefreshAction;
+import org.elasticsearch.action.admin.indices.retention.SyncRetentionLeasesAction;
+import org.elasticsearch.action.admin.indices.retention.TransportSyncRetentionLeasesAction;
 import org.elasticsearch.action.admin.indices.settings.put.TransportUpdateSettingsAction;
 import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsAction;
 import org.elasticsearch.action.admin.indices.shrink.ResizeAction;
 import org.elasticsearch.action.admin.indices.shrink.TransportResizeAction;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsAction;
 import org.elasticsearch.action.admin.indices.stats.TransportIndicesStatsAction;
-import org.elasticsearch.action.admin.indices.template.delete.DeleteIndexTemplateAction;
-import org.elasticsearch.action.admin.indices.template.delete.TransportDeleteIndexTemplateAction;
-import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesAction;
-import org.elasticsearch.action.admin.indices.template.get.TransportGetIndexTemplatesAction;
-import org.elasticsearch.action.admin.indices.template.put.PutIndexTemplateAction;
-import org.elasticsearch.action.admin.indices.template.put.TransportPutIndexTemplateAction;
-import org.elasticsearch.action.support.DestructiveOperations;
 import org.elasticsearch.action.support.TransportAction;
 import org.elasticsearch.common.NamedRegistry;
 import org.elasticsearch.common.inject.AbstractModule;
 import org.elasticsearch.common.inject.multibindings.MapBinder;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.gateway.TransportNodesListGatewayMetaState;
 import org.elasticsearch.gateway.TransportNodesListGatewayStartedShards;
 import org.elasticsearch.index.seqno.GlobalCheckpointSyncAction;
 import org.elasticsearch.index.seqno.RetentionLeaseActions;
@@ -108,6 +98,11 @@ import io.crate.blob.TransportPutChunkAction;
 import io.crate.blob.TransportStartBlobAction;
 import io.crate.cluster.decommission.DecommissionNodeAction;
 import io.crate.cluster.decommission.TransportDecommissionNodeAction;
+import io.crate.execution.ddl.tables.RenameColumnAction;
+import io.crate.execution.ddl.tables.TransportCreateBlobTableAction;
+import io.crate.execution.ddl.tables.TransportCreateTableAction;
+import io.crate.execution.ddl.tables.TransportDropTableAction;
+import io.crate.execution.ddl.tables.TransportRenameColumnAction;
 import io.crate.execution.dml.delete.ShardDeleteAction;
 import io.crate.execution.dml.delete.TransportShardDeleteAction;
 import io.crate.execution.dml.upsert.ShardUpsertAction;
@@ -126,6 +121,13 @@ import io.crate.execution.jobs.kill.TransportKillAllNodeAction;
 import io.crate.execution.jobs.kill.TransportKillJobsNodeAction;
 import io.crate.execution.jobs.transport.JobAction;
 import io.crate.execution.jobs.transport.TransportJobAction;
+import io.crate.fdw.TransportAlterServerAction;
+import io.crate.fdw.TransportCreateForeignTableAction;
+import io.crate.fdw.TransportCreateServerAction;
+import io.crate.fdw.TransportCreateUserMappingAction;
+import io.crate.fdw.TransportDropForeignTableAction;
+import io.crate.fdw.TransportDropServerAction;
+import io.crate.fdw.TransportDropUserMapping;
 import io.crate.replication.logical.action.DropSubscriptionAction;
 import io.crate.replication.logical.action.GetFileChunkAction;
 import io.crate.replication.logical.action.GetStoreMetadataAction;
@@ -134,6 +136,10 @@ import io.crate.replication.logical.action.ReleasePublisherResourcesAction;
 import io.crate.replication.logical.action.ReplayChangesAction;
 import io.crate.replication.logical.action.ShardChangesAction;
 import io.crate.replication.logical.action.UpdateSubscriptionAction;
+import io.crate.role.TransportAlterRoleAction;
+import io.crate.role.TransportCreateRoleAction;
+import io.crate.role.TransportDropRoleAction;
+import io.crate.role.TransportPrivilegesAction;
 
 /**
  * Builds and binds the generic action map, all {@link TransportAction}s
@@ -141,11 +147,9 @@ import io.crate.replication.logical.action.UpdateSubscriptionAction;
 public class ActionModule extends AbstractModule {
 
     private final Map<String, ActionHandler<?, ?>> actions;
-    private final DestructiveOperations destructiveOperations;
 
     public ActionModule(Settings settings, ClusterSettings clusterSettings, List<ActionPlugin> actionPlugins) {
         actions = setupActions(actionPlugins);
-        destructiveOperations = new DestructiveOperations(settings, clusterSettings);
     }
 
     public Map<String, ActionHandler<?, ?>> getActions() {
@@ -171,6 +175,8 @@ public class ActionModule extends AbstractModule {
         }
 
         ActionRegistry actions = new ActionRegistry();
+        actions.register(TransportCreateTableAction.ACTION, TransportCreateTableAction.class);
+        actions.register(TransportCreateBlobTableAction.ACTION, TransportCreateBlobTableAction.class);
         actions.register(ClusterStateAction.INSTANCE, TransportClusterStateAction.class);
         actions.register(ClusterHealthAction.INSTANCE, TransportClusterHealthAction.class);
         actions.register(ClusterUpdateSettingsAction.INSTANCE, TransportClusterUpdateSettingsAction.class);
@@ -178,7 +184,6 @@ public class ActionModule extends AbstractModule {
         actions.register(PendingClusterTasksAction.INSTANCE, TransportPendingClusterTasksAction.class);
         actions.register(PutRepositoryAction.INSTANCE, TransportPutRepositoryAction.class);
         actions.register(DeleteRepositoryAction.INSTANCE, TransportDeleteRepositoryAction.class);
-        actions.register(GetSnapshotsAction.INSTANCE, TransportGetSnapshotsAction.class);
         actions.register(DeleteSnapshotAction.INSTANCE, TransportDeleteSnapshotAction.class);
         actions.register(CreateSnapshotAction.INSTANCE, TransportCreateSnapshotAction.class);
         actions.register(RestoreSnapshotAction.INSTANCE, TransportRestoreSnapshotAction.class);
@@ -186,14 +191,11 @@ public class ActionModule extends AbstractModule {
         actions.register(CreateIndexAction.INSTANCE, TransportCreateIndexAction.class);
         actions.register(ResizeAction.INSTANCE, TransportResizeAction.class);
         actions.register(DeleteIndexAction.INSTANCE, TransportDeleteIndexAction.class);
-        actions.register(PutMappingAction.INSTANCE, TransportPutMappingAction.class);
         actions.register(UpdateSettingsAction.INSTANCE, TransportUpdateSettingsAction.class);
-        actions.register(PutIndexTemplateAction.INSTANCE, TransportPutIndexTemplateAction.class);
-        actions.register(GetIndexTemplatesAction.INSTANCE, TransportGetIndexTemplatesAction.class);
-        actions.register(DeleteIndexTemplateAction.INSTANCE, TransportDeleteIndexTemplateAction.class);
         actions.register(RefreshAction.INSTANCE, TransportRefreshAction.class);
         actions.register(SyncedFlushAction.INSTANCE, TransportSyncedFlushAction.class);
         actions.register(ForceMergeAction.INSTANCE, TransportForceMergeAction.class);
+        actions.register(SyncRetentionLeasesAction.INSTANCE, TransportSyncRetentionLeasesAction.class);
         actions.register(RecoveryAction.INSTANCE, TransportRecoveryAction.class);
         actions.register(AddVotingConfigExclusionsAction.INSTANCE, TransportAddVotingConfigExclusionsAction.class);
         actions.register(ClearVotingConfigExclusionsAction.INSTANCE, TransportClearVotingConfigExclusionsAction.class);
@@ -209,12 +211,12 @@ public class ActionModule extends AbstractModule {
         actions.register(DistributedResultAction.INSTANCE, TransportDistributedResultAction.class);
         actions.register(JobAction.INSTANCE, TransportJobAction.class);
         actions.register(FetchNodeAction.INSTANCE, TransportFetchNodeAction.class);
+        actions.register(RenameColumnAction.INSTANCE, TransportRenameColumnAction.class);
 
         actionPlugins.stream().flatMap(p -> p.getActions().stream()).forEach(actions::register);
 
         // internal actions
         actions.register(GlobalCheckpointSyncAction.TYPE, GlobalCheckpointSyncAction.class);
-        actions.register(TransportNodesListGatewayMetaState.TYPE, TransportNodesListGatewayMetaState.class);
         actions.register(TransportVerifyShardBeforeCloseAction.TYPE, TransportVerifyShardBeforeCloseAction.class);
         actions.register(TransportNodesListGatewayStartedShards.TYPE, TransportNodesListGatewayStartedShards.class);
         actions.register(TransportNodesListShardStoreMetadata.TYPE, TransportNodesListShardStoreMetadata.class);
@@ -238,12 +240,26 @@ public class ActionModule extends AbstractModule {
         actions.register(UpdateSubscriptionAction.INSTANCE, UpdateSubscriptionAction.TransportAction.class);
         actions.register(DropSubscriptionAction.INSTANCE, DropSubscriptionAction.TransportAction.class);
 
+        actions.register(TransportCreateServerAction.ACTION, TransportCreateServerAction.class);
+        actions.register(TransportAlterServerAction.ACTION, TransportAlterServerAction.class);
+        actions.register(TransportCreateForeignTableAction.ACTION, TransportCreateForeignTableAction.class);
+        actions.register(TransportCreateUserMappingAction.ACTION, TransportCreateUserMappingAction.class);
+        actions.register(TransportDropServerAction.ACTION, TransportDropServerAction.class);
+        actions.register(TransportDropForeignTableAction.ACTION, TransportDropForeignTableAction.class);
+        actions.register(TransportDropUserMapping.ACTION, TransportDropUserMapping.class);
+
+        actions.register(TransportDropTableAction.ACTION, TransportDropTableAction.class);
+
+        actions.register(TransportPrivilegesAction.ACTION, TransportPrivilegesAction.class);
+        actions.register(TransportCreateRoleAction.ACTION, TransportCreateRoleAction.class);
+        actions.register(TransportDropRoleAction.ACTION, TransportDropRoleAction.class);
+        actions.register(TransportAlterRoleAction.ACTION, TransportAlterRoleAction.class);
+
         return unmodifiableMap(actions.getRegistry());
     }
 
     @Override
     protected void configure() {
-        bind(DestructiveOperations.class).toInstance(destructiveOperations);
 
         // register ActionType -> transportAction Map used by NodeClient
         @SuppressWarnings("rawtypes")

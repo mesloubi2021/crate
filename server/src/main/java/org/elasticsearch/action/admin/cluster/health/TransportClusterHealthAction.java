@@ -46,7 +46,6 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.util.CollectionUtils;
 import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.node.NodeClosedException;
 import org.elasticsearch.threadpool.ThreadPool;
@@ -193,7 +192,7 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
             listener.onResponse(getResponse(request, currentState, waitCount, TimeoutState.OK));
         } else {
             final ClusterStateObserver observer
-                = new ClusterStateObserver(currentState, clusterService, null, LOGGER);
+                = new ClusterStateObserver(currentState, clusterService.getClusterApplierService(), null, LOGGER);
             final ClusterStateObserver.Listener stateListener = new ClusterStateObserver.Listener() {
                 @Override
                 public void onNewClusterState(ClusterState newState) {
@@ -231,7 +230,7 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
         if (request.waitForNodes().isEmpty() == false) {
             waitCount++;
         }
-        if (CollectionUtils.isEmpty(request.indices()) == false) { // check that they actually exists in the meta data
+        if (request.indices().length > 0) { // check that they actually exists in the meta data
             waitCount++;
         }
         return waitCount;
@@ -289,9 +288,9 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
                 waitForCounter++;
             }
         }
-        if (CollectionUtils.isEmpty(request.indices()) == false) {
+        if (request.indices().length > 0) {
             try {
-                IndexNameExpressionResolver.concreteIndexNames(clusterState.metadata(), IndicesOptions.strictExpand(), request.indices());
+                IndexNameExpressionResolver.concreteIndexNames(clusterState.metadata(), IndicesOptions.STRICT_EXPAND_OPEN_CLOSED, request.indices());
                 waitForCounter++;
             } catch (IndexNotFoundException e) {
                 response.setStatus(ClusterHealthStatus.RED); // no indices, make sure its RED

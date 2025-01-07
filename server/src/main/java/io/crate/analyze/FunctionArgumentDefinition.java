@@ -27,8 +27,6 @@ import java.util.Objects;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
-import org.elasticsearch.common.xcontent.ToXContent;
-import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.jetbrains.annotations.Nullable;
 
@@ -36,7 +34,7 @@ import io.crate.expression.udf.UserDefinedFunctionMetadata;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
 
-public class FunctionArgumentDefinition implements Writeable, ToXContent {
+public class FunctionArgumentDefinition implements Writeable {
 
     @Nullable
     private final String name;
@@ -94,20 +92,12 @@ public class FunctionArgumentDefinition implements Writeable, ToXContent {
                '}';
     }
 
-    @Override
-    public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        builder.startObject().field("name", name).field("data_type");
-        UserDefinedFunctionMetadata.DataTypeXContent.toXContent(type, builder, params);
-        builder.endObject();
-        return builder;
-    }
-
     public static FunctionArgumentDefinition fromXContent(XContentParser parser) throws IOException {
         if (parser.currentToken() != XContentParser.Token.START_OBJECT) {
             throw new IllegalArgumentException("Expected a START_OBJECT but got " + parser.currentToken());
         }
         String name = null;
-        DataType type = DataTypes.UNDEFINED;
+        DataType<?> type = DataTypes.UNDEFINED;
         XContentParser.Token token;
         while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
             if (token == XContentParser.Token.FIELD_NAME) {

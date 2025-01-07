@@ -33,6 +33,9 @@ import io.crate.data.Input;
 import io.crate.data.breaker.RamAccounting;
 import io.crate.execution.engine.aggregation.AggregationFunction;
 import io.crate.memory.MemoryManager;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
+import io.crate.metadata.Scalar;
 import io.crate.metadata.functions.BoundSignature;
 import io.crate.metadata.functions.Signature;
 import io.crate.types.DataType;
@@ -41,16 +44,16 @@ import io.crate.types.TypeSignature;
 public final class ArrayAgg extends AggregationFunction<List<Object>, List<Object>> {
 
     public static final String NAME = "array_agg";
-    public static final Signature SIGNATURE =
-        Signature.aggregate(
-            NAME,
-            TypeSignature.parse("E"),
-            TypeSignature.parse("array(E)")
-        ).withTypeVariableConstraints(typeVariable("E"));
+    public static final Signature SIGNATURE = Signature.builder(NAME, FunctionType.AGGREGATE)
+        .argumentTypes(TypeSignature.parse("E"))
+        .returnType(TypeSignature.parse("array(E)"))
+        .features(Scalar.Feature.DETERMINISTIC)
+        .typeVariableConstraints(typeVariable("E"))
+        .build();
 
 
-    public static void register(AggregationImplModule module) {
-        module.register(SIGNATURE, ArrayAgg::new);
+    public static void register(Functions.Builder builder) {
+        builder.add(SIGNATURE, ArrayAgg::new);
     }
 
     private final Signature signature;

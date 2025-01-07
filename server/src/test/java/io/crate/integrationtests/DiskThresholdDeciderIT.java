@@ -23,7 +23,6 @@ package io.crate.integrationtests;
 
 import static io.crate.testing.SQLTransportExecutor.REQUEST_TIMEOUT;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.elasticsearch.common.util.concurrent.ConcurrentCollections.newConcurrentMap;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -38,8 +37,10 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -247,12 +248,12 @@ public class DiskThresholdDeciderIT extends IntegTestCase {
             ensureGreen();
             execute("optimize table " + tableName + " with (max_num_segments=1)");
 
-            refresh();
+            execute("refresh table " + tableName);
 
             var indicesStats = client().admin().indices().stats(new IndicesStatsRequest().indices(indexName).store(true)).get();
-            final ShardStats[] shardStatses = indicesStats.getIndex(indexName).getShards();
+            final List<ShardStats> shardStatses = indicesStats.getIndex(indexName).getShards();
 
-            final long[] shardSizes = new long[shardStatses.length];
+            final long[] shardSizes = new long[shardStatses.size()];
             for (ShardStats shardStats : shardStatses) {
                 shardSizes[shardStats.getShardRouting().id()] = shardStats.getStats().getStore().sizeInBytes();
             }
@@ -363,7 +364,7 @@ public class DiskThresholdDeciderIT extends IntegTestCase {
     }
 
     private static class TestFileSystemProvider extends FilterFileSystemProvider {
-        private final Map<Path, TestFileStore> trackedPaths = newConcurrentMap();
+        private final Map<Path, TestFileStore> trackedPaths = new ConcurrentHashMap<>();
         private final Path rootDir;
 
         TestFileSystemProvider(FileSystem delegateInstance, Path rootDir) {

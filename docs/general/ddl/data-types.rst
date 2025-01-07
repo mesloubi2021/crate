@@ -128,6 +128,13 @@ CrateDB supports the following data types. Scroll down for more details.
       - A fixed length vector of floating point numbers
       - ``[3.14, 42.21]``
 
+    * - ``ROW``
+      - A composite type made up of a number of inner types/fields. Similar to a
+        ``tuple`` in other languages.
+      - No literal support yet. Result format depends on the used protocol. HTTP
+        uses a list. PostgreSQL serializes it via the ``record`` type (``oid``
+        2249).
+
 
 .. _data-types-ranges-widths:
 
@@ -246,6 +253,46 @@ are likely to be larger due to additional metadata.
          columns to a maximum length of 32766 bytes. You can relax that limitation by either
          defining a column to not use the column store or by :ref:`turning off indexing
          <sql_ddl_index_off>`.
+
+Precedence and type conversion
+------------------------------
+
+When expressions of different data types are combined by operators or scalars,
+the data type with the lower precedence is converted to the data type
+with the higher precedence. If an implicit conversion between the types isn't
+supported, an error is returned.
+
+The following precedence order is used for data types (highest to lowest):
+
+1. Custom (complex) types (currently: :ref:`bitstring <data-types-bit-strings>`,
+   :ref:`float_vector <type-float_vector>`) (highest)
+2. :ref:`GEO_SHAPE <data-types-geo-shape>`
+3. :ref:`JSON <data-type-json>`
+4. :ref:`OBJECT <data-types-objects>`
+5. :ref:`GEO_POINT <data-types-geo-point>`
+6. ``Record`` (internal type, return type of
+   :ref:`table functions <table-functions>`)
+7. :ref:`Array <data-types-arrays>`
+8. :ref:`Numeric <data-types-numeric>`
+9. :ref:`Double precision <type-double-precision>`
+10. :ref:`Real <type-real>`
+11. :ref:`IP <data-types-ip-addresses>`
+12. :ref:`Bigint <type-bigint>`
+13. :ref:`Timestamp without time zone <type-timestamp-without-tz>`
+14. :ref:`Timestamp with time zone <type-timestamp-with-tz>`
+15. :ref:`Date <type-date>`
+16. :ref:`Interval <type-interval>`
+17. :ref:`Regclass <type-regclass>`
+18. :ref:`Regproc <type-regproc>`
+19. :ref:`Integer <type-integer>`
+20. :ref:`Time with time zone <type-time>`
+21. :ref:`Smallint <type-smallint>`
+22. :ref:`Boolean <type-boolean>`
+23. :ref:`"Char" <type-char>`
+24. :ref:`Text <type-text>`
+25. :ref:`Character <data-type-character>`
+26. :ref:`NULL <type-null>` (lowest)
+
 
 .. _data-types-primitive:
 
@@ -953,7 +1000,7 @@ Example::
 
 A large integer.
 
-Limited to eight bytes, with a range from -2^63 to 2^63-1.
+Limited to eight bytes, with a range from -2^63 + 1 to 2^63-2.
 
 Example:
 
@@ -969,7 +1016,7 @@ Example:
     cr> INSERT INTO my_table (
     ...     number
     ... ) VALUES (
-    ...     9223372036854775807
+    ...     9223372036854775806
     ... );
     INSERT OK, 1 row affected (... sec)
 
@@ -984,7 +1031,7 @@ Example:
     +---------------------+
     | number              |
     +---------------------+
-    | 9223372036854775807 |
+    | 9223372036854775806 |
     +---------------------+
     SELECT 1 row in set (... sec)
 
@@ -1002,8 +1049,10 @@ Example:
 An exact `fixed-point fractional number`_ with an arbitrary, user-specified
 precision.
 
-Variable size, with up to 131072 digits before the decimal point and up to
-16383 digits after the decimal point.
+Variable size, with up to 38 digits for storage.
+
+If using ``NUMERIC`` only for type casts up to 131072 digits before the decimal
+point and up to 16383 digits after the decimal point are supported.
 
 For example, using a :ref:`cast from a string literal
 <data-types-casting-str>`::
@@ -1016,13 +1065,6 @@ For example, using a :ref:`cast from a string literal
     +--------+
     SELECT 1 row in set (... sec)
 
-.. NOTE::
-
-    The ``NUMERIC`` type is only supported as a type literal (i.e., for use in
-    SQL :ref:`expressions <gloss-expression>`, like a :ref:`type cast
-    <data-types-casting-exp>`, as above).
-
-    You cannot create table columns of type ``NUMERIC``.
 
 This type is usually used when it is important to preserve exact precision
 or handle values that exceed the range of the numeric types of the fixed
@@ -1035,6 +1077,7 @@ significant digits in the unscaled numeric value. The ``scale`` value of a
 numeric is the count of decimal digits in the fractional part, to the right of
 the decimal point. For example, the number 123.45 has a precision of ``5`` and
 a scale of ``2``. Integers have a scale of zero.
+The scale must be smaller than the precision and greater or equal to zero.
 
 To declare the ``NUMERIC`` type with the precision and scale, use the syntax::
 
@@ -1049,6 +1092,18 @@ Without configuring the precision and scale the ``NUMERIC`` type value will be
 represented by an unscaled value of the unlimited precision::
 
     NUMERIC
+
+.. NOTE::
+
+    ``NUMERIC`` without precision and scale cannot be used in CREATE TABLE
+    statements. To store values of type NUMERIC it is required to define the
+    precision and scale.
+
+.. NOTE::
+
+    ``NUMERIC`` values returned as results of an SQL query might loose precision
+     when using the :ref:`HTTP interface<interface-http>`, because of limitation
+     of `JSON Data Types`_ for numbers with higher than 53-bits precision.
 
 The ``NUMERIC`` type is internally backed by the Java ``BigDecimal`` class. For
 more detailed information about its behaviour, see `BigDecimal documentation`_.
@@ -1926,6 +1981,7 @@ Where ``unit`` can be any of the following:
 - ``HOUR``
 - ``MINUTE``
 - ``SECOND``
+- ``MILLISECOND``
 
 For example::
 
@@ -1961,7 +2017,7 @@ of zero to six digits)::
 .. CAUTION::
 
     The ``INTERVAL`` data type does not currently support the input units
-    ``MILLENNIUM``, ``CENTURY``, ``DECADE``, ``MILLISECOND``, or
+    ``MILLENNIUM``, ``CENTURY``, ``DECADE``, or
     ``MICROSECOND``.
 
     This behaviour does not comply with standard SQL and is incompatible with
@@ -2167,7 +2223,7 @@ For example::
     ...     '127.0.0.1'
     ... ), (
     ...     'router.local',
-    ...     '0:0:0:0:0:ffff:c0a8:64'
+    ...     'ff:0:ff:ff:0:ffff:c0a8:64'
     ... );
     INSERT OK, 2 rows affected (... sec)
 
@@ -2179,12 +2235,12 @@ For example::
 ::
 
     cr> SELECT fqdn, ip_addr FROM my_table ORDER BY fqdn;
-    +--------------+------------------------+
-    | fqdn         | ip_addr                |
-    +--------------+------------------------+
-    | localhost    | 127.0.0.1              |
-    | router.local | 0:0:0:0:0:ffff:c0a8:64 |
-    +--------------+------------------------+
+    +--------------+---------------------------+
+    | fqdn         | ip_addr                   |
+    +--------------+---------------------------+
+    | localhost    | 127.0.0.1                 |
+    | router.local | ff:0:ff:ff:0:ffff:c0a8:64 |
+    +--------------+---------------------------+
     SELECT 2 rows in set (... sec)
 
 The ``fqdn`` column (see `Fully Qualified Domain Name`_) will accept any value
@@ -2885,16 +2941,14 @@ constant array values.
 Nested arrays
 .............
 
-Nested arrays cannot be used directly in column definitions  (i.e.
-``ARRAY(ARRAY(DOUBLE))`` is not accepted), but multiple arrays can be nested
-as long as there are objects in-between:
+You can directly define nested arrays in column definitions:
 
 ::
 
-    CREATE TABLE SensorData (sensorID char(10), readings ARRAY(OBJECT AS (innerarray ARRAY(DOUBLE))));
+    CREATE TABLE SensorData (sensorID char(10), readings ARRAY(ARRAY(DOUBLE)));
 
 
-Nested arrays can still be used directly in input and output to UDFs:
+Nested arrays can also be used directly in input and output to UDFs:
 
 ::
 
@@ -2934,6 +2988,41 @@ requires an intermediate cast:
     |                       2.0 |
     +---------------------------+
 
+.. NOTE::
+
+    Accessing nested arrays will generally require loading
+    sources directly from disk, and will not be very efficient.  If you find
+    yourself using nested arrays frequently, you may want to consider splitting
+    the data up into multiple tables instead.
+
+.. NOTE::
+
+    Nested arrays cannot be created dynamically, either as a
+    :ref:`top level column <column_policy>`
+    or as part of a :ref:`dynamic object <type-object-columns-dynamic>`
+
+.. _type-row:
+
+``ROW``
+=======
+
+A row type is a composite type made up of an arbitrary number of other types,
+similar to a ``tuple`` in programming languages like ``python``.
+
+There is currently no type literal to create values of such a type, but the type
+is used for the result of table functions used in the select list of a statement
+if the table function returns more than one column.
+
+::
+
+    cr> SELECT unnest([1, 2], ['Arthur', 'Trillian']);
+    +----------------------------------------+
+    | unnest([1, 2], ['Arthur', 'Trillian']) |
+    +----------------------------------------+
+    | [1, "Arthur"]                          |
+    | [2, "Trillian"]                        |
+    +----------------------------------------+
+    SELECT 2 rows in set (... sec)
 
 .. _type-float_vector:
 
@@ -3173,11 +3262,11 @@ geographical queries. Its default parameters are::
     <columnName> GEO_SHAPE INDEX USING geohash
         WITH (precision='50m', distance_error_pct=0.025)
 
-There are two geographic index types: ``geohash`` (the default) and
-``quadtree``. These indices are only allowed on ``geo_shape`` columns. For more
+There are three geographic index types: ``geohash`` (default), ``quadtree`` and
+``bkdtree``. These indices are only allowed on ``geo_shape`` columns. For more
 information, see :ref:`type-geo_shape-index`.
 
-Both of these index types accept the following parameters:
+Both ``geohash`` and ``quadtree`` index types accept the following parameters:
 
 ``precision``
   (Default: ``50m``) Define the maximum precision of the used index and
@@ -3226,7 +3315,11 @@ Geo shape index structure
 
 Computations on very complex polygons and geometry collections are exact but
 very expensive. To provide fast queries even on complex shapes, CrateDB uses a
-different approach to store, analyze and query geo shapes.
+different approach to store, analyze and query geo shapes. The available geo
+shape indexing strategies are based on two primary data structures: Prefix and
+BKD trees, which are described below.
+
+.. rubric:: Prefix Tree
 
 The surface of the earth is represented as a number of grid layers each with
 higher precision. While the upper layer has one grid cell, the layer below
@@ -3252,6 +3345,22 @@ The main difference is that the ``geohash`` supports higher precision than the
 ``quadtree`` tree. Both tree implementations support precision in order of
 fractions of millimeters.
 
+.. rubric:: BKD-tree
+
+In the BKD-tree-based (``bkdtree``) approach, a geo shape is decomposed into a
+collection of triangles. Each triangle is represented as a 7-dimensional point
+and stored in this format within a BKD-tree.
+
+To improve the storage efficiency of triangles within an index, the initial four
+dimensions are used to represent the bounding box of each triangle. These
+bounding boxes are stored in the internal nodes of the BKD-tree, while the
+remaining three dimensions are stored in the leaves to enable the reconstruction
+of the original triangles.
+
+The BKD-tree-based indexing strategy maintains the original shapes with an
+accuracy of 1 cm. Its primary advantage over the Prefix tree approach lies in
+its better performance in searching and indexing, coupled with a more efficient
+use of storage.
 
 .. _type-geo_shape-literals:
 
@@ -3689,3 +3798,4 @@ However, you cannot use it with any :ref:`scalar functions
 .. _UTC: `Coordinated Universal Time`_
 .. _WKT: https://en.wikipedia.org/wiki/Well-known_text
 .. _Year.parse Javadoc: https://docs.oracle.com/javase/8/docs/api/java/time/Year.html#parse-java.lang.CharSequence-
+.. _JSON Data Types: https://en.wikipedia.org/wiki/JSON#Data_types

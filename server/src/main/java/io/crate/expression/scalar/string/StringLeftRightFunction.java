@@ -25,7 +25,8 @@ import java.util.Locale;
 import java.util.function.BiFunction;
 
 import io.crate.data.Input;
-import io.crate.expression.scalar.ScalarFunctionModule;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -35,24 +36,24 @@ import io.crate.types.DataTypes;
 
 public class StringLeftRightFunction extends Scalar<String, Object> {
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                "left",
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.INTEGER.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder("left", FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.INTEGER.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Feature.DETERMINISTIC)
+                .build(),
             (signature, boundSignature) ->
                 new StringLeftRightFunction(signature, boundSignature, StringLeftRightFunction::left)
         );
-        module.register(
-            Signature.scalar(
-                "right",
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.INTEGER.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+        module.add(
+            Signature.builder("right", FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.INTEGER.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Feature.DETERMINISTIC)
+                .build(),
             (signature, boundSignature) ->
                 new StringLeftRightFunction(signature, boundSignature, StringLeftRightFunction::right)
         );

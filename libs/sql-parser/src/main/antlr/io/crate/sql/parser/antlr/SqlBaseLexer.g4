@@ -76,6 +76,7 @@ ESCAPE: 'ESCAPE';
 ASC: 'ASC';
 DESC: 'DESC';
 SUBSTRING: 'SUBSTRING';
+POSITION: 'POSITION';
 TRIM: 'TRIM';
 LEADING: 'LEADING';
 TRAILING: 'TRAILING';
@@ -89,11 +90,13 @@ DAY: 'DAY';
 HOUR: 'HOUR';
 MINUTE: 'MINUTE';
 SECOND: 'SECOND';
+MILLISECOND: 'MILLISECOND';
 CURRENT_DATE: 'CURRENT_DATE';
 CURRENT_TIME: 'CURRENT_TIME';
 CURRENT_TIMESTAMP: 'CURRENT_TIMESTAMP';
 CURRENT_SCHEMA: 'CURRENT_SCHEMA';
 CURRENT_USER: 'CURRENT_USER';
+CURRENT_ROLE: 'CURRENT_ROLE';
 SESSION_USER: 'SESSION_USER';
 EXTRACT: 'EXTRACT';
 CASE: 'CASE';
@@ -171,6 +174,7 @@ PRECISION: 'PRECISION';
 TIMESTAMP: 'TIMESTAMP';
 IP: 'IP';
 CHARACTER: 'CHARACTER';
+CHAR: 'CHAR';
 CHAR_SPECIAL: '"CHAR"';
 VARYING: 'VARYING';
 OBJECT: 'OBJECT';
@@ -207,6 +211,7 @@ INPUT: 'INPUT';
 
 ANALYZE: 'ANALYZE';
 COSTS: 'COSTS';
+VERBOSE: 'VERBOSE';
 DISCARD: 'DISCARD';
 PLANS: 'PLANS';
 SEQUENCES: 'SEQUENCES';
@@ -294,6 +299,7 @@ GENERATED: 'GENERATED';
 ALWAYS: 'ALWAYS';
 
 USER: 'USER';
+ROLE: 'ROLE';
 GRANT: 'GRANT';
 DENY: 'DENY';
 REVOKE: 'REVOKE';
@@ -324,6 +330,16 @@ FORWARD: 'FORWARD';
 BACKWARD: 'BACKWARD';
 RELATIVE: 'RELATIVE';
 PRIOR: 'PRIOR';
+SERVER: 'SERVER';
+FOREIGN: 'FOREIGN';
+DATA: 'DATA';
+WRAPPER: 'WRAPPER';
+OPTIONS: 'OPTIONS';
+MAPPING: 'MAPPING';
+CASCADE: 'CASCADE';
+RESTRICT: 'RESTRICT';
+
+
 
 EQ  : '=';
 NEQ : '<>' | '!=';
@@ -340,6 +356,7 @@ REGEX_NO_MATCH_CI: '!~*';
 PLUS: '+';
 MINUS: '-';
 ASTERISK: '*';
+CARET: '^';
 SLASH: '/';
 PERCENT: '%';
 CONCAT: '||';
@@ -365,8 +382,12 @@ STRING
     : '\'' ( ~'\'' | '\'\'' )* '\''
     ;
 
+// Description of rules, in the order of the appearence in |:
+// 1. Restrict single matches of \ or ' inside E'' (to be able to match specific combinations)
+// 2. Allow matching double single quote '' since quote can be escaped by  a quote
+// 3. Allow matching one or many backslashes followed by a non-slash character
 ESCAPED_STRING
-    : 'E' '\'' ( ~'\'' | '\'\'' | '\\\'' )* '\''
+    : 'E' '\'' ( ~('\'' | '\\') | '\'\'' | ('\\'+  ~'\\') )* '\''
     ;
 
 BIT_STRING

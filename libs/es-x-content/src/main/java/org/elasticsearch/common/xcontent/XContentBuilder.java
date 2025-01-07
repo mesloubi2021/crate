@@ -39,7 +39,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.ServiceLoader;
-import java.util.function.Function;
+import java.util.function.UnaryOperator;
+
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A utility to build XContent (ie json).
@@ -62,7 +64,7 @@ public final class XContentBuilder implements Closeable, Flushable {
 
     private static final Map<Class<?>, Writer> WRITERS;
     private static final Map<Class<?>, HumanReadableTransformer> HUMAN_READABLE_TRANSFORMERS;
-    private static final Map<Class<?>, Function<Object, Object>> DATE_TRANSFORMERS;
+    private static final Map<Class<?>, UnaryOperator<Object>> DATE_TRANSFORMERS;
 
     static {
         Map<Class<?>, Writer> writers = new HashMap<>();
@@ -91,16 +93,16 @@ public final class XContentBuilder implements Closeable, Flushable {
         writers.put(BigDecimal.class, (b, v) -> b.value((BigDecimal) v));
 
         Map<Class<?>, HumanReadableTransformer> humanReadableTransformer = new HashMap<>();
-        Map<Class<?>, Function<Object, Object>> dateTransformers = new HashMap<>();
+        Map<Class<?>, UnaryOperator<Object>> dateTransformers = new HashMap<>();
 
         // treat strings as already converted
-        dateTransformers.put(String.class, Function.identity());
+        dateTransformers.put(String.class, UnaryOperator.identity());
 
         // Load pluggable extensions
         for (XContentBuilderExtension service : ServiceLoader.load(XContentBuilderExtension.class)) {
             Map<Class<?>, Writer> addlWriters = service.getXContentWriters();
             Map<Class<?>, HumanReadableTransformer> addlTransformers = service.getXContentHumanReadableTransformers();
-            Map<Class<?>, Function<Object, Object>> addlDateTransformers = service.getDateTransformers();
+            Map<Class<?>, UnaryOperator<Object>> addlDateTransformers = service.getDateTransformers();
 
             addlWriters.forEach((key, value) -> Objects.requireNonNull(value,
                 "invalid null xcontent writer for class " + key));
@@ -152,8 +154,16 @@ public final class XContentBuilder implements Closeable, Flushable {
      * to call {@link #close()} when the builder is done with.
      */
     public XContentBuilder(XContent xContent, OutputStream bos) throws IOException {
+        this(xContent, bos, null);
+    }
+
+    /**
+     * Constructs a new builder using the provided XContent and an OutputStream. Make sure
+     * to call {@link #close()} when the builder is done with.
+     */
+    public XContentBuilder(XContent xContent, OutputStream bos, @Nullable String rootValueSeparator) throws IOException {
         this.bos = bos;
-        this.generator = xContent.createGenerator(bos);
+        this.generator = xContent.createGenerator(bos, rootValueSeparator);
     }
 
     public XContentType contentType() {
@@ -683,7 +693,7 @@ public final class XContentBuilder implements Closeable, Flushable {
      */
     public XContentBuilder timeField(String name, String readableName, long value) throws IOException {
         if (humanReadable) {
-            Function<Object, Object> longTransformer = DATE_TRANSFORMERS.get(Long.class);
+            UnaryOperator<Object> longTransformer = DATE_TRANSFORMERS.get(Long.class);
             if (longTransformer == null) {
                 throw new IllegalArgumentException("cannot write time value xcontent for unknown value of type Long");
             }
@@ -703,7 +713,7 @@ public final class XContentBuilder implements Closeable, Flushable {
         if (timeValue == null) {
             return nullValue();
         } else {
-            Function<Object, Object> transformer = DATE_TRANSFORMERS.get(timeValue.getClass());
+            UnaryOperator<Object> transformer = DATE_TRANSFORMERS.get(timeValue.getClass());
             if (transformer == null) {
                 throw new IllegalArgumentException("cannot write time value xcontent for unknown value of type " + timeValue.getClass());
             }
@@ -786,38 +796,12 @@ public final class XContentBuilder implements Closeable, Flushable {
             value((Iterable<?>) value, writerOverrides);
         } else if (value instanceof Object[]) {
             values((Object[]) value, writerOverrides);
-        } else if (value instanceof ToXContent) {
-            value((ToXContent) value);
         } else if (value instanceof Enum<?>) {
             // Write out the Enum toString
             value(Objects.toString(value));
         } else {
             throw new IllegalArgumentException("cannot write xcontent for unknown value of type " + value.getClass());
         }
-    }
-
-    ////////////////////////////////////////////////////////////////////////////
-    // ToXContent
-    //////////////////////////////////
-
-    public XContentBuilder field(String name, ToXContent value) throws IOException {
-        return field(name).value(value);
-    }
-
-    public XContentBuilder field(String name, ToXContent value, ToXContent.Params params) throws IOException {
-        return field(name).value(value, params);
-    }
-
-    private XContentBuilder value(ToXContent value) throws IOException {
-        return value(value, ToXContent.EMPTY_PARAMS);
-    }
-
-    private XContentBuilder value(ToXContent value, ToXContent.Params params) throws IOException {
-        if (value == null) {
-            return nullValue();
-        }
-        value.toXContent(this, params);
-        return this;
     }
 
     ////////////////////////////////////////////////////////////////////////////

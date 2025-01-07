@@ -21,9 +21,7 @@
 
 package io.crate.execution.dml.delete;
 
-import static org.hamcrest.Matchers.instanceOf;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -35,7 +33,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.elasticsearch.Version;
-import org.elasticsearch.action.support.replication.TransportWriteAction;
+import org.elasticsearch.action.support.replication.TransportReplicationAction;
 import org.elasticsearch.cluster.action.shard.ShardStateAction;
 import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.settings.Settings;
@@ -50,7 +48,6 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import io.crate.execution.ddl.SchemaUpdateClient;
 import io.crate.execution.dml.ShardResponse;
 import io.crate.execution.jobs.TasksService;
 import io.crate.metadata.RelationName;
@@ -88,8 +85,7 @@ public class TransportShardDeleteActionTest extends CrateDummyClusterServiceUnit
             indicesService,
             mock(TasksService.class),
             mock(ThreadPool.class),
-            mock(ShardStateAction.class),
-            mock(SchemaUpdateClient.class)
+            mock(ShardStateAction.class)
         );
     }
 
@@ -104,11 +100,11 @@ public class TransportShardDeleteActionTest extends CrateDummyClusterServiceUnit
         final ShardDeleteRequest request = new ShardDeleteRequest(shardId, UUID.randomUUID());
         request.add(1, new ShardDeleteRequest.Item("1"));
 
-        TransportWriteAction.WritePrimaryResult<ShardDeleteRequest, ShardResponse> result =
+        TransportReplicationAction.PrimaryResult<ShardDeleteRequest, ShardResponse> result =
             transportShardDeleteAction.processRequestItems(indexShard, request, new AtomicBoolean(true));
 
-        assertThat(result.finalResponseIfSuccessful.failure(), instanceOf(InterruptedException.class));
-        assertThat(request.skipFromLocation(), is(1));
+        assertThat(result.finalResponseIfSuccessful.failure()).isExactlyInstanceOf(InterruptedException.class);
+        assertThat(request.skipFromLocation()).isEqualTo(1);
     }
 
     @Test

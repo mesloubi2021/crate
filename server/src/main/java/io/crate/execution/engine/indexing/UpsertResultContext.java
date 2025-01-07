@@ -21,19 +21,21 @@
 
 package io.crate.execution.engine.indexing;
 
+import java.util.Collections;
+import java.util.List;
+import java.util.function.BiConsumer;
+import java.util.function.Predicate;
+
+import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.jetbrains.annotations.Nullable;
+
+import io.crate.auth.AccessControl;
 import io.crate.data.Input;
 import io.crate.data.Row;
 import io.crate.execution.dsl.projection.SourceIndexWriterReturnSummaryProjection;
 import io.crate.execution.engine.collect.CollectExpression;
 import io.crate.expression.InputFactory;
 import io.crate.metadata.TransactionContext;
-import org.elasticsearch.cluster.node.DiscoveryNode;
-
-import org.jetbrains.annotations.Nullable;
-import java.util.Collections;
-import java.util.List;
-import java.util.function.BiConsumer;
-import java.util.function.Predicate;
 
 public class UpsertResultContext {
 
@@ -72,6 +74,7 @@ public class UpsertResultContext {
     public static UpsertResultContext forReturnSummary(TransactionContext txnCtx,
                                                        SourceIndexWriterReturnSummaryProjection projection,
                                                        DiscoveryNode discoveryNode,
+                                                       AccessControl accessControl,
                                                        InputFactory inputFactory) {
         InputFactory.Context<CollectExpression<Row, ?>> ctxSourceInfo = inputFactory.ctxForInputColumns(txnCtx);
         //noinspection unchecked
@@ -91,9 +94,7 @@ public class UpsertResultContext {
             lineNumberInput,
             sourceParsingFailureInput,
             ctxSourceInfo.expressions(),
-            projection.returnSummaryOnFailOnly() ?
-                UpsertResultCollectors.newSummaryOnFailOrRowCountOnSuccessCollector(discoveryNode) :
-                UpsertResultCollectors.newSummaryCollector(discoveryNode)
+            UpsertResultCollectors.newSummaryCollector(discoveryNode, accessControl)
         );
     }
 

@@ -21,22 +21,26 @@
 
 package io.crate.analyze;
 
-import io.crate.common.collections.Lists2;
-import io.crate.metadata.ColumnIdent;
-import io.crate.metadata.doc.DocSysColumns;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.UUIDs;
-import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.io.stream.BytesStreamOutput;
+import static io.crate.common.collections.Lists.getOnlyElement;
 
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.function.Function;
 
-import static io.crate.common.collections.Lists2.getOnlyElement;
+import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.common.UUIDs;
+import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.io.stream.BytesStreamOutput;
+import org.elasticsearch.common.io.stream.StreamInput;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import io.crate.common.collections.Lists;
+import io.crate.metadata.ColumnIdent;
+import io.crate.metadata.doc.SysColumns;
 
 
 public class Id {
@@ -47,7 +51,7 @@ public class Id {
         return ensureNonNull(getOnlyElement(keyValues));
     };
 
-    private static final Function<List<String>, String> ONLY_ITEM = Lists2::getOnlyElement;
+    private static final Function<List<String>, String> ONLY_ITEM = Lists::getOnlyElement;
 
 
     /**
@@ -57,19 +61,16 @@ public class Id {
      */
     private static Function<List<String>, String> compileWithNullValidation(final int numPks,
                                                                             final int clusteredByPosition) {
-        switch (numPks) {
-            case 0:
-                return RANDOM_ID;
-            case 1:
-                return ONLY_ITEM_NULL_VALIDATION;
-            default:
-                return keyValues -> {
-                    if (keyValues.size() != numPks) {
-                        throw new IllegalArgumentException("Missing primary key values");
-                    }
-                    return encode(keyValues, clusteredByPosition);
-                };
-        }
+        return switch (numPks) {
+            case 0 -> RANDOM_ID;
+            case 1 -> ONLY_ITEM_NULL_VALIDATION;
+            default -> keyValues -> {
+                if (keyValues.size() != numPks) {
+                    throw new IllegalArgumentException("Missing primary key values");
+                }
+                return encode(keyValues, clusteredByPosition);
+            };
+        };
     }
 
     /**
@@ -89,7 +90,7 @@ public class Id {
      */
     public static Function<List<String>, String> compileWithNullValidation(final List<ColumnIdent> pkColumns, final ColumnIdent clusteredBy) {
         final int numPks = pkColumns.size();
-        if (numPks == 1 && getOnlyElement(pkColumns).equals(DocSysColumns.ID)) {
+        if (numPks == 1 && getOnlyElement(pkColumns).equals(SysColumns.ID.COLUMN)) {
             return RANDOM_ID;
         }
         int idx = -1;
@@ -107,7 +108,27 @@ public class Id {
         return pkValue;
     }
 
-    private static String encode(List<String> values, int clusteredByPosition) {
+    public static List<String> decode(List<ColumnIdent> primaryKeys, String id) {
+        if (primaryKeys.isEmpty() || primaryKeys.size() == 1) {
+            return List.of(id);
+        }
+        List<String> pkValues = new ArrayList<>();
+        byte[] inputBytes = Base64.getDecoder().decode(id);
+        try (var in = StreamInput.wrap(inputBytes)) {
+            int size = in.readVInt();
+            assert size == primaryKeys.size()
+                : "Encoded primary key values must match size of primaryKey column list";
+            for (int i = 0; i < size; i++) {
+                BytesRef bytesRef = in.readBytesRef();
+                pkValues.add(bytesRef.utf8ToString());
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return pkValues;
+    }
+
+    public static String encode(List<String> values, int clusteredByPosition) {
         try (BytesStreamOutput out = new BytesStreamOutput(estimateSize(values))) {
             int size = values.size();
             out.writeVInt(size);

@@ -22,6 +22,8 @@
 package io.crate.expression.scalar;
 
 import io.crate.data.Input;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -33,12 +35,13 @@ public final class PiFunction extends Scalar<Double, Object> {
 
     private static final String NAME = "pi";
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                NAME,
-                DataTypes.DOUBLE.getTypeSignature()
-            ),
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes()
+                .returnType(DataTypes.DOUBLE.getTypeSignature())
+                .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+                .build(),
             PiFunction::new
         );
     }

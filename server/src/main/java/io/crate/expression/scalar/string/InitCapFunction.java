@@ -21,20 +21,22 @@
 
 package io.crate.expression.scalar.string;
 
-import io.crate.expression.scalar.ScalarFunctionModule;
 import io.crate.expression.scalar.UnaryScalar;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
+import io.crate.metadata.Scalar;
 import io.crate.metadata.functions.Signature;
 import io.crate.types.DataTypes;
 
 public final class InitCapFunction {
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                "initcap",
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder("initcap", FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new UnaryScalar<>(
                     signature,

@@ -21,22 +21,25 @@
 
 package io.crate.execution.engine.aggregation.impl;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import org.elasticsearch.Version;
+import org.elasticsearch.common.breaker.CircuitBreakingException;
+import org.jetbrains.annotations.Nullable;
+
 import io.crate.data.Input;
 import io.crate.data.breaker.RamAccounting;
 import io.crate.execution.engine.aggregation.AggregationFunction;
 import io.crate.memory.MemoryManager;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
+import io.crate.metadata.Scalar;
 import io.crate.metadata.functions.BoundSignature;
 import io.crate.metadata.functions.Signature;
 import io.crate.types.ArrayType;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
-
-import org.elasticsearch.Version;
-import org.elasticsearch.common.breaker.CircuitBreakingException;
-
-import org.jetbrains.annotations.Nullable;
-import java.util.ArrayList;
-import java.util.List;
 
 class PercentileAggregation extends AggregationFunction<TDigestState, Object> {
 
@@ -46,24 +49,54 @@ class PercentileAggregation extends AggregationFunction<TDigestState, Object> {
         DataTypes.register(TDigestStateType.ID, in -> TDigestStateType.INSTANCE);
     }
 
-    public static void register(AggregationImplModule mod) {
+    public static void register(Functions.Builder builder) {
         for (var supportedType : DataTypes.NUMERIC_PRIMITIVE_TYPES) {
-            mod.register(
-                Signature.aggregate(
-                    NAME,
-                    supportedType.getTypeSignature(),
-                    DataTypes.DOUBLE.getTypeSignature(),
-                    DataTypes.DOUBLE.getTypeSignature()
-                ),
+            builder.add(
+                Signature.builder(NAME, FunctionType.AGGREGATE)
+                    .argumentTypes(
+                        supportedType.getTypeSignature(),
+                        DataTypes.DOUBLE.getTypeSignature()
+                    )
+                    .returnType(DataTypes.DOUBLE.getTypeSignature())
+                    .features(Scalar.Feature.DETERMINISTIC)
+                    .build(),
                 PercentileAggregation::new
             );
-            mod.register(
-                Signature.aggregate(
-                    NAME,
-                    supportedType.getTypeSignature(),
-                    DataTypes.DOUBLE_ARRAY.getTypeSignature(),
-                    DataTypes.DOUBLE_ARRAY.getTypeSignature()
-                ),
+            builder.add(
+                Signature.builder(NAME, FunctionType.AGGREGATE)
+                    .argumentTypes(
+                        supportedType.getTypeSignature(),
+                        DataTypes.DOUBLE_ARRAY.getTypeSignature()
+                    )
+                    .returnType(DataTypes.DOUBLE_ARRAY.getTypeSignature())
+                    .features(Scalar.Feature.DETERMINISTIC)
+                    .build(),
+                PercentileAggregation::new
+            );
+
+            // Optional 3rd `compression` setting argument
+            builder.add(
+                Signature.builder(NAME, FunctionType.AGGREGATE)
+                    .argumentTypes(
+                        supportedType.getTypeSignature(),
+                        DataTypes.DOUBLE.getTypeSignature(),
+                        DataTypes.DOUBLE.getTypeSignature()
+                    )
+                    .returnType(DataTypes.DOUBLE.getTypeSignature())
+                    .features(Scalar.Feature.DETERMINISTIC)
+                    .build(),
+                PercentileAggregation::new
+            );
+            builder.add(
+                Signature.builder(NAME, FunctionType.AGGREGATE)
+                    .argumentTypes(
+                        supportedType.getTypeSignature(),
+                        DataTypes.DOUBLE_ARRAY.getTypeSignature(),
+                        DataTypes.DOUBLE.getTypeSignature()
+                    )
+                    .returnType(DataTypes.DOUBLE_ARRAY.getTypeSignature())
+                    .features(Scalar.Feature.DETERMINISTIC)
+                    .build(),
                 PercentileAggregation::new
             );
         }
@@ -104,6 +137,10 @@ class PercentileAggregation extends AggregationFunction<TDigestState, Object> {
                                 Input<?>... args) throws CircuitBreakingException {
         if (state.isEmpty()) {
             Object fractionValue = args[1].value();
+            if (args.length > 2) {
+                Double compression = DataTypes.DOUBLE.sanitizeValue(args[2].value());
+                state = new TDigestState(compression, new double[]{});
+            }
             initState(state, fractionValue, ramAccounting);
         }
         Double value = DataTypes.DOUBLE.sanitizeValue(args[0].value());

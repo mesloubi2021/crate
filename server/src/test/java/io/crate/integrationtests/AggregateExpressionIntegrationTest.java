@@ -22,12 +22,14 @@
 package io.crate.integrationtests;
 
 import static io.crate.testing.Asserts.assertThat;
+import java.util.Map;
 
 import org.elasticsearch.test.IntegTestCase;
 import org.junit.Test;
 
 import io.crate.testing.UseJdbc;
 
+@IntegTestCase.ClusterScope(minNumDataNodes = 2)
 public class AggregateExpressionIntegrationTest extends IntegTestCase {
 
     @Test
@@ -82,8 +84,8 @@ public class AggregateExpressionIntegrationTest extends IntegTestCase {
                 "WITH (number_of_replicas=0)");
         execute(
             "INSERT INTO tbl VALUES (?, ?, ?)", new Object[][]{
-                new Object[]{1.0d, 1f, 9223372036854775807L},
-                new Object[]{1.56d, 2.12f, 2L}});
+                new Object[]{1.0d, 1f, 9223372036854775806L},
+                new Object[]{1.56d, 2.12f, 3L}});
         execute("refresh table tbl");
 
         execute("SELECT sum(x::numeric(16, 1))," +
@@ -94,21 +96,39 @@ public class AggregateExpressionIntegrationTest extends IntegTestCase {
     }
 
     @Test
+    public void test_numeric_agg_with_numeric_cast() {
+        execute("CREATE TABLE IF NOT EXISTS t01 (txt TEXT, val DOUBLE PRECISION)");
+        execute("INSERT INTO t01 VALUES ('a', 1.0)");
+        execute("REFRESH TABLE t01");
+        execute(
+            """
+                SELECT
+                    txt,
+                SUM(val :: NUMERIC(10, 2)) AS val2
+                FROM t01
+                GROUP BY txt
+            """);
+        assertThat(response).hasRows(
+            "a| 1.00"
+        );
+    }
+
+    @Test
     public void test_numeric_avg_with_on_floating_point_and_long_columns_with_doc_values() {
         execute("CREATE TABLE tbl (x float, y double, z long) " +
             "CLUSTERED INTO 1 SHARDS " +
             "WITH (number_of_replicas=0)");
         execute(
             "INSERT INTO tbl VALUES (?, ?, ?)", new Object[][]{
-                new Object[]{0.3f, 2.251d, 9223372036854775807L},
-                new Object[]{0.7f, 2.251d, 9223372036854775807L}});
+                new Object[]{0.3f, 2.251d, 9223372036854775806L},
+                new Object[]{0.7f, 2.251d, 9223372036854775806L}});
         execute("refresh table tbl");
 
         execute("SELECT avg(x::numeric(16, 1)), " +
                 "       avg(y::numeric(16, 2))," +
                 "       avg(z::numeric) " + // Handle precision error by casting.
             "FROM tbl");
-        assertThat(response).hasRows("0.5| 2.25| 9223372036854775807");
+        assertThat(response).hasRows("0.5| 2.25| 9223372036854775806");
     }
 
     @Test
@@ -277,5 +297,34 @@ public class AggregateExpressionIntegrationTest extends IntegTestCase {
             "a",
             "b",
             "c");
+    }
+
+    public void test_assure_cmp_by_function_call_with_reference_and_literal_does_not_throw_exception() {
+        execute("create table tbl (name text, x int);");
+        execute("insert into tbl (name, x) values ('foo', 10)");
+        execute("refresh table tbl");
+        execute("select max_by(name, 1) from tbl;");
+        assertThat(response).hasRows("foo");
+    }
+
+    @SuppressWarnings("unchecked")
+    public void test_topk_agg() {
+        execute("create table tbl (l long, l_no_doc_values long storage with(columnstore = false))");
+        execute("insert into tbl(l, l_no_doc_values) values (1, 1), (1, 1), (1, 2), (2, 2), (2, 2)");
+        execute("refresh table tbl");
+
+        // Use this very verbose style of assertion, since the return type is an Array<Object(UNDEFINED)>,
+        // and while HTTP returns Long for the item and frequency values, PG converts them to Integer
+        execute("select topk(l) tl from tbl");
+        Map<String, Object> resultRows = (Map<String, Object>) response.rows()[0][0];
+        assertThat(resultRows).containsOnlyKeys("maximum_error", "frequencies");
+        assertThat(resultRows.get("maximum_error")).isNotNull();
+        assertThat(resultRows.get("frequencies")).isNotNull();
+
+        execute("select topk(l_no_doc_values) tl from tbl");
+        resultRows = (Map<String, Object>) response.rows()[0][0];
+        assertThat(resultRows).containsOnlyKeys("maximum_error", "frequencies");
+        assertThat(resultRows.get("maximum_error")).isNotNull();
+        assertThat(resultRows.get("frequencies")).isNotNull();
     }
 }

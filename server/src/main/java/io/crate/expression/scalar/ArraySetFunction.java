@@ -27,6 +27,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import io.crate.data.Input;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -40,27 +42,29 @@ public class ArraySetFunction extends Scalar<List<Object>, Object> {
 
     public static final String NAME = "array_set";
 
-    public static void register(ScalarFunctionModule module) {
+    public static void register(Functions.Builder module) {
         TypeSignature arrayESignature = TypeSignature.parse("array(E)");
-        module.register(
-            Signature.scalar(
-                NAME,
-                arrayESignature,
-                new ArrayType<>(DataTypes.INTEGER).getTypeSignature(),
-                arrayESignature,
-                arrayESignature
-            ).withTypeVariableConstraints(typeVariable("E")),
-            ArraySetFunction::new
+        module.add(
+                Signature.builder(NAME, FunctionType.SCALAR)
+                        .argumentTypes(arrayESignature,
+                                new ArrayType<>(DataTypes.INTEGER).getTypeSignature(),
+                                arrayESignature)
+                        .returnType(arrayESignature)
+                        .typeVariableConstraints(typeVariable("E"))
+                        .features(Feature.DETERMINISTIC, Feature.STRICTNULL)
+                        .build(),
+                ArraySetFunction::new
         );
-        module.register(
-            Signature.scalar(
-                NAME,
-                arrayESignature,
-                DataTypes.INTEGER.getTypeSignature(),
-                TypeSignature.parse("E"),
-                arrayESignature
-            ).withTypeVariableConstraints(typeVariable("E")),
-            SingleArraySetFunction::new
+        module.add(
+                Signature.builder(NAME, FunctionType.SCALAR)
+                        .argumentTypes(arrayESignature,
+                                DataTypes.INTEGER.getTypeSignature(),
+                                TypeSignature.parse("E"))
+                        .returnType(arrayESignature)
+                        .typeVariableConstraints(typeVariable("E"))
+                        .features(Feature.DETERMINISTIC, Feature.STRICTNULL)
+                        .build(),
+                SingleArraySetFunction::new
         );
     }
 

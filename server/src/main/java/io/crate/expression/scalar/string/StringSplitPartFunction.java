@@ -22,7 +22,8 @@
 package io.crate.expression.scalar.string;
 
 import io.crate.data.Input;
-import io.crate.expression.scalar.ScalarFunctionModule;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -37,15 +38,13 @@ import io.crate.types.DataTypes;
  */
 public final class StringSplitPartFunction extends Scalar<String, Object> {
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                "split_part",
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.INTEGER.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder("split_part", FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(), DataTypes.STRING.getTypeSignature(), DataTypes.INTEGER.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Feature.DETERMINISTIC)
+                .build(),
             StringSplitPartFunction::new
         );
     }

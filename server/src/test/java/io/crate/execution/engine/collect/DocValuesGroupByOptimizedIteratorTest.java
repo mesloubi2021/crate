@@ -21,19 +21,21 @@
 
 package io.crate.execution.engine.collect;
 
-import static io.crate.testing.Asserts.assertThat;
+import static io.crate.operation.aggregation.AggregationTestCase.closeShard;
+import static io.crate.operation.aggregation.AggregationTestCase.createCollectPhase;
+import static io.crate.operation.aggregation.AggregationTestCase.createCollectTask;
+import static io.crate.operation.aggregation.AggregationTestCase.newStartedPrimaryShard;
 import static io.crate.testing.TestingHelpers.createNodeContext;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.elasticsearch.cluster.metadata.Metadata.COLUMN_OID_UNASSIGNED;
 import static org.mockito.Mockito.mock;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.NumericDocValuesField;
@@ -44,7 +46,9 @@ import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.store.ByteBuffersDirectory;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.lucene.BytesRefs;
+import org.elasticsearch.index.shard.IndexShard;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -52,13 +56,19 @@ import io.crate.data.BatchIterator;
 import io.crate.data.Row;
 import io.crate.data.breaker.RamAccounting;
 import io.crate.data.testing.TestingRowConsumer;
+import io.crate.exceptions.JobKilledException;
+import io.crate.execution.dsl.projection.GroupProjection;
 import io.crate.execution.engine.aggregation.impl.SumAggregation;
 import io.crate.execution.engine.fetch.ReaderContext;
-import io.crate.expression.reference.doc.lucene.BytesRefColumnReference;
 import io.crate.expression.reference.doc.lucene.CollectorContext;
 import io.crate.expression.reference.doc.lucene.LongColumnReference;
 import io.crate.expression.reference.doc.lucene.LuceneCollectorExpression;
 import io.crate.expression.reference.doc.lucene.LuceneReferenceResolver;
+import io.crate.expression.reference.doc.lucene.StringColumnReference;
+import io.crate.expression.symbol.AggregateMode;
+import io.crate.expression.symbol.InputColumn;
+import io.crate.lucene.LuceneQueryBuilder;
+import io.crate.metadata.FunctionType;
 import io.crate.metadata.Functions;
 import io.crate.metadata.IndexType;
 import io.crate.metadata.Reference;
@@ -68,8 +78,8 @@ import io.crate.metadata.RowGranularity;
 import io.crate.metadata.SimpleReference;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.metadata.functions.Signature;
-import io.crate.sql.tree.ColumnPolicy;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
+import io.crate.testing.TestingHelpers;
 import io.crate.types.DataTypes;
 
 public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServiceUnitTest {
@@ -104,11 +114,10 @@ public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServ
     @Test
     public void test_group_by_doc_values_optimized_iterator_for_single_numeric_key() throws Exception {
         SumAggregation<?> sumAggregation = (SumAggregation<?>) functions.getQualified(
-            Signature.aggregate(
-                SumAggregation.NAME,
-                DataTypes.LONG.getTypeSignature(),
-                DataTypes.LONG.getTypeSignature()
-            ),
+            Signature.builder(SumAggregation.NAME, FunctionType.AGGREGATE)
+                .argumentTypes(DataTypes.LONG.getTypeSignature())
+                .returnType(DataTypes.LONG.getTypeSignature())
+                .build(),
             List.of(DataTypes.LONG),
             DataTypes.LONG
         );
@@ -119,7 +128,6 @@ public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServ
                 new ReferenceIdent(RelationName.fromIndexName("test"), "z"),
                 RowGranularity.DOC,
                 DataTypes.LONG,
-                ColumnPolicy.DYNAMIC,
                 IndexType.PLAIN,
                 true,
                 true,
@@ -129,6 +137,7 @@ public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServ
                 null)
             ),
             mock(DocTableInfo.class),
+            Version.CURRENT,
             List.of()
         );
         var keyExpressions = List.of(new LongColumnReference("y"));
@@ -139,7 +148,6 @@ public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServ
                 new ReferenceIdent(RelationName.fromIndexName("test"), "y"),
                 RowGranularity.DOC,
                 DataTypes.LONG,
-                ColumnPolicy.DYNAMIC,
                 IndexType.PLAIN,
                 true,
                 true,
@@ -153,7 +161,7 @@ public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServ
             null,
             null,
             new MatchAllDocsQuery(),
-            new CollectorContext(Set.of(), Function.identity())
+            new CollectorContext(() -> null)
         );
 
         var rowConsumer = new TestingRowConsumer();
@@ -165,11 +173,10 @@ public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServ
     @Test
     public void test_group_by_doc_values_optimized_iterator_for_many_keys() throws Exception {
         SumAggregation<?> sumAggregation = (SumAggregation<?>) functions.getQualified(
-            Signature.aggregate(
-                SumAggregation.NAME,
-                DataTypes.LONG.getTypeSignature(),
-                DataTypes.LONG.getTypeSignature()
-            ),
+            Signature.builder(SumAggregation.NAME, FunctionType.AGGREGATE)
+                .argumentTypes(DataTypes.LONG.getTypeSignature())
+                .returnType(DataTypes.LONG.getTypeSignature())
+                .build(),
             List.of(DataTypes.LONG),
             DataTypes.LONG
         );
@@ -182,7 +189,6 @@ public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServ
                     "z"),
                 RowGranularity.DOC,
                 DataTypes.LONG,
-                ColumnPolicy.DYNAMIC,
                 IndexType.PLAIN,
                 true,
                 true,
@@ -192,15 +198,15 @@ public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServ
                 null)
             ),
             mock(DocTableInfo.class),
+            Version.CURRENT,
             List.of()
         );
-        var keyExpressions = List.of(new BytesRefColumnReference("x"), new LongColumnReference("y"));
+        var keyExpressions = List.of(new StringColumnReference("x"), new LongColumnReference("y"));
         var keyRefs = List.<Reference>of(
             new SimpleReference(
                 new ReferenceIdent(RelationName.fromIndexName("test"), "x"),
                 RowGranularity.DOC,
                 DataTypes.STRING,
-                ColumnPolicy.DYNAMIC,
                 IndexType.PLAIN,
                 true,
                 true,
@@ -213,7 +219,6 @@ public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServ
                 new ReferenceIdent(RelationName.fromIndexName("test"), "y"),
                 RowGranularity.DOC,
                 DataTypes.LONG,
-                ColumnPolicy.DYNAMIC,
                 IndexType.PLAIN,
                 true,
                 true,
@@ -232,7 +237,7 @@ public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServ
             null,
             null,
             new MatchAllDocsQuery(),
-            new CollectorContext(Set.of(), Function.identity())
+            new CollectorContext(() -> null)
         );
 
         var rowConsumer = new TestingRowConsumer();
@@ -240,6 +245,55 @@ public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServ
 
         assertThat(rowConsumer.getResult()).containsExactlyInAnyOrder(
             new Object[]{"0", 0L, 6L}, new Object[]{"1", 1L, 4L});
+    }
+
+    @Test
+    public void test_create_optimized_iterator_for_single_string_key() throws Exception {
+        GroupProjection groupProjection = new GroupProjection(
+            List.of(new InputColumn(0, DataTypes.STRING)),
+            List.of(),
+            AggregateMode.ITER_PARTIAL,
+            RowGranularity.SHARD
+        );
+        var reference = new SimpleReference(
+            new ReferenceIdent(new RelationName("doc", "test"), "x"),
+            RowGranularity.DOC,
+            DataTypes.STRING,
+            IndexType.PLAIN,
+            true,
+            true,
+            0,
+            111,
+            false,
+            null
+        );
+        IndexShard shard = newStartedPrimaryShard(
+            TestingHelpers.createNodeContext(),
+            List.of(reference),
+            THREAD_POOL
+        );
+        var collectPhase = createCollectPhase(List.of(reference), List.of(groupProjection));
+        var collectTask = createCollectTask(shard, collectPhase, Version.CURRENT);
+        var nodeCtx = createNodeContext();
+        var referenceResolver = new LuceneReferenceResolver(shard.shardId().getIndexName(), List.of(), _ -> false);
+
+        var it = DocValuesGroupByOptimizedIterator.tryOptimize(
+            functions,
+            referenceResolver,
+            shard,
+            mock(DocTableInfo.class),
+            new LuceneQueryBuilder(nodeCtx),
+            new DocInputFactory(
+                nodeCtx,
+                referenceResolver
+            ),
+            collectPhase,
+            collectTask
+        );
+        assertThat(it).isNotNull();
+
+        collectTask.kill(JobKilledException.of(null));
+        closeShard(shard);
     }
 
     @Test
@@ -312,7 +366,7 @@ public class DocValuesGroupByOptimizedIteratorTest extends CrateDummyClusterServ
             (expressions) -> expressions.get(0).value(),
             (key, cells) -> cells[0] = key,
             new MatchAllDocsQuery(),
-            new CollectorContext(Set.of(), Function.identity())
+            new CollectorContext(() -> null)
         );
     }
 }

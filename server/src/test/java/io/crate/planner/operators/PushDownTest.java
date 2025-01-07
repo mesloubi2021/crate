@@ -42,11 +42,10 @@ public class PushDownTest extends CrateDummyClusterServiceUnitTest {
 
     @Before
     public void setup() throws IOException {
-        sqlExecutor = SQLExecutor.builder(clusterService)
+        sqlExecutor = SQLExecutor.of(clusterService)
             .addTable(T3.T1_DEFINITION)
             .addTable(T3.T2_DEFINITION)
-            .addTable(TableDefinitions.USER_TABLE_DEFINITION)
-            .build();
+            .addTable(TableDefinitions.USER_TABLE_DEFINITION);
 
         // push down is currently NOT possible when using hash joins. To test the push downs we must disable hash joins.
         sqlExecutor.getSessionSettings().setHashJoinEnabled(false);
@@ -158,7 +157,7 @@ public class PushDownTest extends CrateDummyClusterServiceUnitTest {
         assertThat(plan).isEqualTo(
             """
             Eval[a, b]
-              └ OrderBy[concat(a, b) ASC]
+              └ OrderBy[(a || b) ASC]
                 └ NestedLoopJoin[INNER | (a = b)]
                   ├ Collect[doc.t1 | [a] | true]
                   └ Collect[doc.t2 | [b] | true]
@@ -215,7 +214,7 @@ public class PushDownTest extends CrateDummyClusterServiceUnitTest {
         assertThat(plan).isEqualTo(
             """
             OrderBy[a ASC]
-              └ HashJoin[(a = b)]
+              └ HashJoin[INNER | (a = b)]
                 ├ Collect[doc.t1 | [a] | true]
                 └ Collect[doc.t2 | [b] | true]
             """
@@ -266,7 +265,7 @@ public class PushDownTest extends CrateDummyClusterServiceUnitTest {
         var expectedPlan =
             """
             Rename[a, x, i, b, y, i] AS tjoin
-              └ HashJoin[(x = y)]
+              └ HashJoin[INNER | (x = y)]
                 ├ Collect[doc.t1 | [a, x, i] | (x = 10)]
                 └ Collect[doc.t2 | [b, y, i] | true]
             """;
@@ -305,8 +304,8 @@ public class PushDownTest extends CrateDummyClusterServiceUnitTest {
         var expectedPlan =
             """
             Rename[a, x, i, b, y, i] AS tjoin
-              └ Filter[(concat(a, b) = '')]
-                └ HashJoin[(x = y)]
+              └ Filter[((a || b) = '')]
+                └ HashJoin[INNER | (x = y)]
                   ├ Collect[doc.t1 | [a, x, i] | (x = 10)]
                   └ Collect[doc.t2 | [b, y, i] | (y = 20)]
             """;
@@ -490,19 +489,16 @@ public class PushDownTest extends CrateDummyClusterServiceUnitTest {
                 AND
                 a.country = 'DE'
             """);
-        var expectedPlan =
-            """
-            Eval[mountain]
-              └ Filter[EXISTS (SELECT 1 FROM (b))]
-                └ CorrelatedJoin[mountain, height, (SELECT 1 FROM (b))]
-                  └ Rename[mountain, height] AS a
-                    └ Collect[sys.summits | [mountain, height] | (country = 'DE')]
-                  └ SubPlan
-                    └ Eval[1]
-                      └ Rename[1] AS b
-                        └ Limit[1;0]
-                          └ Collect[sys.summits | [1] | (height = height)]
-            """;
-        assertThat(plan).isEqualTo(expectedPlan);
+        assertThat(plan).hasOperators(
+            "Eval[mountain]",
+            "  └ Filter[EXISTS (SELECT 1 FROM (b))]",
+            "    └ CorrelatedJoin[mountain, height, (SELECT 1 FROM (b))]",
+            "      └ Rename[mountain, height] AS a",
+            "        └ Collect[sys.summits | [mountain, height] | (country = 'DE')]",
+            "      └ SubPlan",
+            "        └ Rename[1] AS b",
+            "          └ Limit[1;0]",
+            "            └ Collect[sys.summits | [1] | (height = height)]"
+        );
     }
 }

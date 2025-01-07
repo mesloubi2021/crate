@@ -24,14 +24,15 @@ package io.crate.http;
 import java.io.ByteArrayOutputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.InetSocketAddress;
-import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiConsumer;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.jetbrains.annotations.Nullable;
 
 import com.fasterxml.jackson.core.JsonEncoding;
 import com.fasterxml.jackson.core.JsonFactory;
@@ -52,19 +53,26 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.DefaultHttpHeaders;
+import io.netty.handler.codec.http.EmptyHttpHeaders;
 import io.netty.handler.codec.http.HttpContentCompressor;
+import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpRequestDecoder;
 import io.netty.handler.codec.http.HttpResponseEncoder;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpVersion;
-import io.netty.handler.codec.http.QueryStringDecoder;
 import io.netty.util.ReferenceCountUtil;
 
+/**
+ * Http server with configurable request handler.
+ */
 public class HttpTestServer {
 
     private final int port;
     private final boolean fail;
+
+    private final BiConsumer<HttpRequest, JsonGenerator> requestHandler;
     private static final JsonFactory JSON_FACTORY;
 
     private Channel channel;
@@ -79,15 +87,36 @@ public class HttpTestServer {
         JSON_FACTORY.configure(JsonParser.Feature.ALLOW_COMMENTS, true);
     }
 
+    @Nullable
+    private final Map<String, String> headers;
+
 
 
     /**
      * @param port the port to listen on
      * @param fail of set to true, the server will emit error responses
+     * @param requestHandler is function to transform incoming messages to some custom output, written to a pre-configured json generator.
+     * @param headers Http headers which are attached to the response
+     * It MUST propagate any exception to the server so that server can set status to 500.
      */
-    public HttpTestServer(int port, boolean fail) {
+    public HttpTestServer(int port, boolean fail, BiConsumer<HttpRequest, JsonGenerator> requestHandler, @Nullable Map<String, String> headers) {
         this.port = port;
         this.fail = fail;
+        this.requestHandler = requestHandler;
+        this.headers = headers;
+    }
+
+    /**
+     * @param port the port to listen on
+     * @param fail of set to true, the server will emit error responses
+     * @param requestHandler is function to transform incoming messages to some custom output, written to a pre-configured json generator.
+     * It MUST propagate any exception to the server so that server can set status to 500.
+     */
+    public HttpTestServer(int port, boolean fail, BiConsumer<HttpRequest, JsonGenerator> requestHandler) {
+        this.port = port;
+        this.fail = fail;
+        this.requestHandler = requestHandler;
+        this.headers = null;
     }
 
     public void run() throws InterruptedException {
@@ -110,6 +139,15 @@ public class HttpTestServer {
 
         // Bind and start to accept incoming connections.
         channel = bootstrap.bind(new InetSocketAddress(port)).sync().channel();
+    }
+
+    /**
+     * @return actual port, assigned by kernel.
+     * Can be different from "port" property if "port = 0"
+     */
+    public int boundPort() {
+        InetSocketAddress localAddress = (InetSocketAddress) channel.localAddress();
+        return localAddress.getPort();
     }
 
     public void shutDown() {
@@ -141,35 +179,29 @@ public class HttpTestServer {
 
         private void handleHttpRequest(ChannelHandlerContext ctx, HttpRequest msg) throws UnsupportedEncodingException {
             String uri = msg.uri();
-            QueryStringDecoder decoder = new QueryStringDecoder(uri);
             logger.debug("Got Request for " + uri);
             HttpResponseStatus status = fail ? HttpResponseStatus.BAD_REQUEST : HttpResponseStatus.OK;
-
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             try {
                 JsonGenerator generator = JSON_FACTORY.createGenerator(out, JsonEncoding.UTF8);
-                generator.writeStartObject();
-                for (Map.Entry<String, List<String>> entry : decoder.parameters().entrySet()) {
-                    if (entry.getValue().size() == 1) {
-                        generator.writeStringField(entry.getKey(), URLDecoder.decode(entry.getValue().get(0), "UTF-8"));
-                    } else {
-                        generator.writeArrayFieldStart(entry.getKey());
-                        for (String value : entry.getValue()) {
-                            generator.writeString(URLDecoder.decode(value, "UTF-8"));
-                        }
-                        generator.writeEndArray();
-                    }
-                }
-                generator.writeEndObject();
-                generator.close();
-
+                requestHandler.accept(msg, generator);
             } catch (Exception ex) {
                 status = HttpResponseStatus.INTERNAL_SERVER_ERROR;
             }
             ByteBuf byteBuf = Unpooled.wrappedBuffer(out.toByteArray());
-            responses.add(out.toString(StandardCharsets.UTF_8.name()));
+            responses.add(out.toString(StandardCharsets.UTF_8));
 
-            DefaultFullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, byteBuf);
+            DefaultFullHttpResponse response;
+            if (headers != null && headers.isEmpty() == false) {
+                HttpHeaders httpHeaders = new DefaultHttpHeaders();
+                for (var entries : headers.entrySet()) {
+                    httpHeaders.add(entries.getKey(), entries.getValue());
+                }
+                response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, byteBuf, httpHeaders, EmptyHttpHeaders.INSTANCE);
+            } else {
+                response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, byteBuf);
+            }
+
             ChannelFuture future = ctx.channel().writeAndFlush(response);
             future.addListener(ChannelFutureListener.CLOSE);
         }

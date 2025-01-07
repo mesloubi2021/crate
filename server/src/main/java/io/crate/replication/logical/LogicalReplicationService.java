@@ -21,6 +21,10 @@
 
 package io.crate.replication.logical;
 
+import static io.crate.analyze.SnapshotSettings.SCHEMA_RENAME_PATTERN;
+import static io.crate.analyze.SnapshotSettings.SCHEMA_RENAME_REPLACEMENT;
+import static io.crate.analyze.SnapshotSettings.TABLE_RENAME_PATTERN;
+import static io.crate.analyze.SnapshotSettings.TABLE_RENAME_REPLACEMENT;
 import static io.crate.replication.logical.repository.LogicalReplicationRepository.REMOTE_REPOSITORY_PREFIX;
 import static io.crate.replication.logical.repository.LogicalReplicationRepository.TYPE;
 import static org.elasticsearch.action.support.master.MasterNodeRequest.DEFAULT_MASTER_NODE_TIMEOUT;
@@ -37,8 +41,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-
-import org.jetbrains.annotations.Nullable;
+import java.util.function.Function;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -55,12 +58,14 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.settings.IndexScopedSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.repositories.RepositoriesService;
+import org.elasticsearch.snapshots.RestoreInfo;
 import org.elasticsearch.snapshots.RestoreService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.RemoteClusters;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.VisibleForTesting;
 
 import io.crate.action.FutureActionListener;
-import io.crate.common.annotations.VisibleForTesting;
 import io.crate.exceptions.RelationAlreadyExists;
 import io.crate.exceptions.SubscriptionRestoreException;
 import io.crate.metadata.PartitionName;
@@ -209,8 +214,7 @@ public class LogicalReplicationService implements ClusterStateListener, Closeabl
     public CompletableFuture<PublicationsStateAction.Response> getPublicationState(String subscriptionName,
                                                                                    List<String> publications,
                                                                                    ConnectionInfo connectionInfo) {
-        FutureActionListener<PublicationsStateAction.Response, PublicationsStateAction.Response> finalFuture =
-            FutureActionListener.newInstance();
+        FutureActionListener<PublicationsStateAction.Response> finalFuture = new FutureActionListener<>();
         BiConsumer<String, Throwable> onError = (message, err) -> {
             var subscriptionStateFuture = updateSubscriptionState(
                 subscriptionName,
@@ -295,8 +299,10 @@ public class LogicalReplicationService implements ClusterStateListener, Closeabl
                 indicesToRestore.toArray(new String[0]),
                 templatesToRestore.toArray(new String[0]),
                 IndicesOptions.LENIENT_EXPAND_OPEN,
-                null,
-                null,
+                TABLE_RENAME_PATTERN.getDefault(Settings.EMPTY),
+                TABLE_RENAME_REPLACEMENT.getDefault(Settings.EMPTY),
+                SCHEMA_RENAME_PATTERN.getDefault(Settings.EMPTY),
+                SCHEMA_RENAME_REPLACEMENT.getDefault(Settings.EMPTY),
                 restoreSettings,
                 DEFAULT_MASTER_NODE_TIMEOUT,
                 false,
@@ -311,48 +317,42 @@ public class LogicalReplicationService implements ClusterStateListener, Closeabl
                 Strings.EMPTY_ARRAY
             );
 
-        FutureActionListener<RestoreService.RestoreCompletionResponse, RestoreService.RestoreCompletionResponse> restoreFuture =
-            FutureActionListener.newInstance();
+        FutureActionListener<RestoreService.RestoreCompletionResponse> restoreListener = new FutureActionListener<>();
         activeOperations.incrementAndGet();
-        restoreFuture.whenComplete((res, err) -> {
-            activeOperations.decrementAndGet();
-        });
-        try {
-            threadPool.executor(ThreadPool.Names.SNAPSHOT).execute(
-                () -> {
-                    try {
-                        restoreService.restoreSnapshot(restoreRequest, restoreFuture);
-                    } catch (Exception e) {
-                        restoreFuture.onFailure(e);
-                    }
-                }
-            );
-        } catch (RejectedExecutionException ex) {
-            restoreFuture.onFailure(ex);
-        }
-
-        return restoreFuture
-            .thenCompose(ignored -> updateSubscriptionState(
+        var restoreFuture = restoreListener
+            .whenComplete((_, _) -> {
+                activeOperations.decrementAndGet();
+            })
+            // Update subscription state, we want to wait until this update is done before proceeding
+            .thenCompose(_ -> updateSubscriptionState(
                 subscriptionName,
                 relationNames,
                 Subscription.State.RESTORING,
                 null
             ))
-            .thenCompose(ignored -> afterReplicationStarted(subscriptionName, restoreFuture.join(), relationNames));
+            .thenCompose(_ -> afterReplicationStarted(subscriptionName, restoreListener.join(), relationNames));
+
+        try {
+            threadPool.executor(ThreadPool.Names.SNAPSHOT).execute(
+                () -> {
+                    try {
+                        restoreService.restoreSnapshot(restoreRequest, null, restoreListener);
+                    } catch (Exception e) {
+                        restoreListener.onFailure(e);
+                    }
+                }
+            );
+        } catch (RejectedExecutionException ex) {
+            restoreListener.onFailure(ex);
+        }
+
+        return restoreFuture;
     }
 
     private CompletableFuture<Boolean> afterReplicationStarted(String subscriptionName,
                                                                RestoreService.RestoreCompletionResponse response,
                                                                Collection<RelationName> relationNames) {
-        var restoreFuture = new FutureActionListener<>(RestoreSnapshotResponse::getRestoreInfo);
-        if (response.getRestoreInfo() != null) {
-            // Restore finished immediately
-            restoreFuture.complete(response.getRestoreInfo());
-        } else {
-            // Restore still in progress, add listener to wait for it
-            clusterService.addListener(new RestoreClusterStateListener(clusterService, response, restoreFuture));
-        }
-        return restoreFuture.thenCompose(restoreInfo -> {
+        Function<RestoreInfo, CompletableFuture<Boolean>> onRestoreInfo = restoreInfo -> {
             if (restoreInfo == null || restoreInfo.failedShards() == 0) {
                 LOGGER.debug("Restore success, following will start once shards are active");
                 return updateSubscriptionState(
@@ -373,7 +373,16 @@ public class LogicalReplicationService implements ClusterStateListener, Closeabl
                 }
                 throw new SubscriptionRestoreException(msg);
             }
-        });
+        };
+        if (response.getRestoreInfo() != null) {
+            LOGGER.debug("Restore completed immediately, no shards to wait for using a cluster state listener");
+            return onRestoreInfo.apply(response.getRestoreInfo());
+        } else {
+            FutureActionListener<RestoreSnapshotResponse> restoreFuture = new FutureActionListener<>();
+            // Restore still in progress, add listener to wait for it
+            clusterService.addListener(new RestoreClusterStateListener(clusterService, response, restoreFuture));
+            return restoreFuture.thenCompose(resp -> onRestoreInfo.apply(resp.getRestoreInfo()));
+        }
     }
 
     public CompletableFuture<Boolean> updateSubscriptionState(String subscriptionName,
@@ -416,10 +425,8 @@ public class LogicalReplicationService implements ClusterStateListener, Closeabl
             relations
         );
         var request = new UpdateSubscriptionAction.Request(subscriptionName, newSubscription);
-        var future = new FutureActionListener<>(AcknowledgedResponse::isAcknowledged);
-        client.execute(UpdateSubscriptionAction.INSTANCE, request)
-            .whenComplete(future);
-        return future;
+        return client.execute(UpdateSubscriptionAction.INSTANCE, request)
+            .thenApply(AcknowledgedResponse::isAcknowledged);
     }
 
     @VisibleForTesting

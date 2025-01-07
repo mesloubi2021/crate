@@ -21,6 +21,8 @@
 
 package io.crate.metadata.cluster;
 
+import java.util.Locale;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.support.IndicesOptions;
@@ -39,7 +41,7 @@ import org.elasticsearch.indices.IndexTemplateMissingException;
 
 import io.crate.execution.ddl.Templates;
 import io.crate.execution.ddl.tables.RenameTableRequest;
-import io.crate.metadata.IndexParts;
+import io.crate.metadata.IndexName;
 import io.crate.metadata.PartitionName;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.view.ViewsMetadata;
@@ -67,7 +69,19 @@ public class RenameTableClusterStateExecutor {
         Metadata currentMetadata = currentState.metadata();
         Metadata.Builder newMetadata = Metadata.builder(currentMetadata);
         ViewsMetadata views = currentMetadata.custom(ViewsMetadata.TYPE);
-        if (views != null && views.contains(source)) {
+        boolean isView = views != null && views.contains(source);
+
+        boolean viewExists = views != null && views.contains(target);
+        boolean tableExists = currentMetadata.hasIndex(target.indexNameOrAlias()) || // simple table
+            DDLClusterStateHelpers.templateMetadata(currentMetadata, target) != null; // partitioned table
+        if (viewExists || tableExists) {
+            throw new IllegalArgumentException(String.format(
+                Locale.ENGLISH,
+                "Cannot rename %s %s to %s, %s %s already exists",
+                isView ? "view" : "table", source, target, viewExists ? "view" : "table", target));
+        }
+
+        if (isView) {
             ViewsMetadata updatedViewsMetadata = views.rename(source, target);
             newMetadata.putCustom(ViewsMetadata.TYPE, updatedViewsMetadata);
             return ClusterState.builder(currentState)
@@ -102,7 +116,7 @@ public class RenameTableClusterStateExecutor {
                 IndexMetadata targetMd;
                 if (isPartitioned) {
                     PartitionName partitionName = PartitionName.fromIndexOrTemplate(sourceIndexName);
-                    String targetIndexName = IndexParts.toIndexName(target, partitionName.ident());
+                    String targetIndexName = IndexName.encode(target, partitionName.ident());
                     targetMd = IndexMetadata.builder(sourceIndexMetadata)
                         .removeAllAliases()
                         .putAlias(new AliasMetadata(target.indexNameOrAlias()))
@@ -139,9 +153,9 @@ public class RenameTableClusterStateExecutor {
     private static void renameTemplate(Metadata.Builder newMetadata,
                                        IndexTemplateMetadata sourceTemplateMetadata,
                                        RelationName target) {
-        IndexTemplateMetadata.Builder updatedTemplate = Templates.copyWithNewName(sourceTemplateMetadata, target);
+        IndexTemplateMetadata.Builder updatedTemplate = Templates.withName(sourceTemplateMetadata, target);
         newMetadata
-            .removeTemplate(sourceTemplateMetadata.getName())
+            .removeTemplate(sourceTemplateMetadata.name())
             .put(updatedTemplate);
     }
 }

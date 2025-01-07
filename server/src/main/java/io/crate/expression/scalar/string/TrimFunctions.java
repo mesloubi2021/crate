@@ -27,16 +27,17 @@ import java.util.function.BinaryOperator;
 
 import io.crate.common.StringUtils;
 import io.crate.data.Input;
-import io.crate.expression.scalar.ScalarFunctionModule;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
 import io.crate.metadata.functions.BoundSignature;
 import io.crate.metadata.functions.Signature;
+import io.crate.role.Roles;
 import io.crate.sql.tree.TrimMode;
 import io.crate.types.DataTypes;
-import io.crate.user.UserLookup;
 
 
 public final class TrimFunctions {
@@ -48,14 +49,14 @@ public final class TrimFunctions {
     private static final String RTRIM_NAME = "rtrim";
     private static final String BTRIM_NAME = "btrim";
 
-    public static void register(ScalarFunctionModule module) {
+    public static void register(Functions.Builder module) {
         // trim(text)
-        module.register(
-            Signature.scalar(
-                TRIM_NAME,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+        module.add(
+            Signature.builder(TRIM_NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new OneCharTrimFunction(
                     signature,
@@ -64,24 +65,22 @@ public final class TrimFunctions {
                 )
         );
         // trim(MODE trimmingText from text)
-        module.register(
-            Signature.scalar(
-                TRIM_NAME,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+        module.add(
+            Signature.builder(TRIM_NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(), DataTypes.STRING.getTypeSignature(), DataTypes.STRING.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             TrimFunction::new
         );
 
         // ltrim(text)
-        module.register(
-            Signature.scalar(
-                LTRIM_NAME,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+        module.add(
+            Signature.builder(LTRIM_NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new SideTrimFunction(
                     signature,
@@ -90,13 +89,13 @@ public final class TrimFunctions {
                 )
         );
         // ltrim(text, trimmingText)
-        module.register(
-            Signature.scalar(
-                LTRIM_NAME,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+        module.add(
+            Signature.builder(LTRIM_NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new SideTrimFunction(
                     signature,
@@ -106,12 +105,12 @@ public final class TrimFunctions {
         );
 
         // rtrim(text)
-        module.register(
-            Signature.scalar(
-                RTRIM_NAME,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+        module.add(
+            Signature.builder(RTRIM_NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new SideTrimFunction(
                     signature,
@@ -120,13 +119,13 @@ public final class TrimFunctions {
                 )
         );
         // rtrim(text, trimmingText)
-        module.register(
-            Signature.scalar(
-                RTRIM_NAME,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+        module.add(
+            Signature.builder(RTRIM_NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new SideTrimFunction(
                     signature,
@@ -137,12 +136,12 @@ public final class TrimFunctions {
 
 
         // btrim(text)
-        module.register(
-            Signature.scalar(
-                BTRIM_NAME,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+        module.add(
+            Signature.builder(BTRIM_NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new SideTrimFunction(
                     signature,
@@ -151,13 +150,13 @@ public final class TrimFunctions {
                 )
         );
         // btrim(text, trimmingText)
-        module.register(
-            Signature.scalar(
-                BTRIM_NAME,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+        module.add(
+            Signature.builder(BTRIM_NAME, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature(),
+                    DataTypes.STRING.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new SideTrimFunction(
                     signature,
@@ -174,7 +173,7 @@ public final class TrimFunctions {
         }
 
         @Override
-        public Scalar<String, String> compile(List<Symbol> arguments, String currentUser, UserLookup userLookup) {
+        public Scalar<String, String> compile(List<Symbol> arguments, String currentUser, Roles roles) {
             assert arguments.size() == 3 : "number of args must be 3";
 
             Symbol modeSymbol = arguments.get(2);
@@ -192,7 +191,7 @@ public final class TrimFunctions {
             }
 
             String charsToTrim = (String) ((Input<?>) charsToTrimSymbol).value();
-            if (charsToTrim.length() == 1) {
+            if (charsToTrim != null && charsToTrim.length() == 1) {
                 return new OneCharTrimFunction(signature, boundSignature, charsToTrim.charAt(0));
             }
             return this;
@@ -208,7 +207,7 @@ public final class TrimFunctions {
 
             String charsToTrimArg = args[1].value();
             if (charsToTrimArg == null) {
-                return target;
+                return null;
             }
 
             TrimMode mode = TrimMode.of(args[2].value());
@@ -257,9 +256,10 @@ public final class TrimFunctions {
 
             if (args.length == 2) {
                 String passedTrimmingText = args[1].value();
-                if (passedTrimmingText != null) {
-                    return trimFunction.apply(target, passedTrimmingText);
+                if (passedTrimmingText == null) {
+                    return null;
                 }
+                return trimFunction.apply(target, passedTrimmingText);
             }
 
             return trimFunction.apply(target, " ");

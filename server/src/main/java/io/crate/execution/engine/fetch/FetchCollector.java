@@ -22,27 +22,29 @@
 package io.crate.execution.engine.fetch;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 
 import org.apache.lucene.codecs.StoredFieldsReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.ReaderUtil;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.lucene.index.SequentialStoredFieldsLeafReader;
 
 import com.carrotsearch.hppc.IntArrayList;
 
 import io.crate.Streamer;
-import io.crate.common.exceptions.Exceptions;
 import io.crate.data.breaker.RamAccounting;
 import io.crate.execution.engine.distribution.StreamBucket;
 import io.crate.expression.InputRow;
 import io.crate.expression.reference.doc.lucene.CollectorContext;
 import io.crate.expression.reference.doc.lucene.LuceneCollectorExpression;
+import io.crate.expression.reference.doc.lucene.StoredRowLookup;
 import io.netty.util.collection.IntObjectHashMap;
 
 class FetchCollector {
 
-    private final LuceneCollectorExpression[] collectorExpressions;
+    private final LuceneCollectorExpression<?>[] collectorExpressions;
     private final InputRow row;
     private final Streamer<?>[] streamers;
     private final RamAccounting ramAccounting;
@@ -50,6 +52,7 @@ class FetchCollector {
     private final FetchTask fetchTask;
 
     FetchCollector(List<LuceneCollectorExpression<?>> collectorExpressions,
+                   String indexName,
                    Streamer<?>[] streamers,
                    FetchTask fetchTask,
                    RamAccounting ramAccounting,
@@ -61,7 +64,8 @@ class FetchCollector {
         this.ramAccounting = ramAccounting;
         this.readerId = readerId;
         var table = fetchTask.table(readerId);
-        CollectorContext collectorContext = new CollectorContext(readerId, table.droppedColumns(), table.lookupNameBySourceKey());
+        Version shardCreatedVersion = fetchTask.indexShard(readerId).getVersionCreated();
+        CollectorContext collectorContext = new CollectorContext(readerId, () -> StoredRowLookup.create(shardCreatedVersion, table, indexName));
         for (LuceneCollectorExpression<?> collectorExpression : this.collectorExpressions) {
             collectorExpression.startCollect(collectorContext);
         }
@@ -103,7 +107,7 @@ class FetchCollector {
                     }
                     setNextDocId(readerContext, docId - subReaderContext.docBase);
                 } catch (IOException e) {
-                    Exceptions.rethrowRuntimeException(e);
+                    throw new UncheckedIOException(e);
                 }
                 builder.add(row);
             }

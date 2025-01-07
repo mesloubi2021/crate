@@ -32,8 +32,8 @@ import java.util.concurrent.TimeUnit;
 import org.junit.Test;
 import org.mockito.Mockito;
 
-import io.crate.action.sql.BaseResultReceiver;
-import io.crate.action.sql.Session;
+import io.crate.session.BaseResultReceiver;
+import io.crate.session.Session;
 import io.crate.data.InMemoryBatchIterator;
 import io.crate.data.Row;
 import io.crate.data.RowConsumer;
@@ -68,9 +68,9 @@ public class BatchPortalTest extends CrateDummyClusterServiceUnitTest {
         Planner plannerMock = mock(Planner.class);
         when(plannerMock.plan(Mockito.any(), Mockito.any())).thenReturn(insertPlan);
         SQLExecutor sqlExecutor = SQLExecutor.builder(clusterService)
-            .addTable("create table t1 (x int)")
-            .overridePlanner(plannerMock)
-            .build();
+            .setPlanner(plannerMock)
+            .build()
+            .addTable("create table t1 (x int)");
 
         Session session = sqlExecutor.createSession();
 

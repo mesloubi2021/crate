@@ -29,8 +29,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.IntSupplier;
 import java.util.function.LongSupplier;
-import java.util.stream.Collectors;
 
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -39,7 +39,6 @@ import org.jetbrains.annotations.Nullable;
 
 import io.crate.expression.symbol.Symbol;
 import io.crate.expression.symbol.SymbolType;
-import io.crate.sql.tree.ColumnPolicy;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
 
@@ -110,7 +109,14 @@ public class IndexReference extends SimpleReference {
                 // This code handles outdated shards case.
                 return new IndexReference(position, oid, isDropped, ident, indexType, columns, analyzer);
             }
-            List<Reference> sources = references.values().stream().filter(ref -> sourceNames.contains(ref.storageIdent())).collect(Collectors.toList());
+            List<Reference> sources = new ArrayList<>(sourceNames.size());
+            for (String sourceName : sourceNames) {
+                Reference ref = references.values().stream()
+                    .filter(r -> r.storageIdent().equals(sourceName))
+                    .findAny()
+                    .orElseThrow();
+                sources.add(ref);
+            }
             return new IndexReference(position, oid, isDropped, ident, indexType, sources, analyzer);
         }
     }
@@ -137,7 +143,7 @@ public class IndexReference extends SimpleReference {
                           IndexType indexType,
                           List<Reference> columns,
                           @Nullable String analyzer) {
-        super(ident, RowGranularity.DOC, DataTypes.STRING, ColumnPolicy.DYNAMIC, indexType,
+        super(ident, RowGranularity.DOC, DataTypes.STRING, indexType,
               false, false, position, oid, isDropped, null);
         this.columns = columns;
         this.analyzer = analyzer;
@@ -146,7 +152,6 @@ public class IndexReference extends SimpleReference {
     public IndexReference(ReferenceIdent ident,
                           RowGranularity granularity,
                           DataType<?> type,
-                          ColumnPolicy columnPolicy,
                           IndexType indexType,
                           boolean nullable,
                           boolean hasDocValues,
@@ -159,7 +164,6 @@ public class IndexReference extends SimpleReference {
         super(ident,
               granularity,
               type,
-              columnPolicy,
               indexType,
               nullable,
               hasDocValues,
@@ -223,7 +227,6 @@ public class IndexReference extends SimpleReference {
             newIdent,
             granularity,
             type,
-            columnPolicy,
             indexType,
             nullable,
             hasDocValues,
@@ -237,24 +240,25 @@ public class IndexReference extends SimpleReference {
     }
 
     @Override
-    public Reference withColumnOid(LongSupplier oidSupplier) {
-        if (oid != COLUMN_OID_UNASSIGNED) {
+    public Reference withOidAndPosition(LongSupplier acquireOid, IntSupplier acquirePosition) {
+        long newOid = oid == COLUMN_OID_UNASSIGNED ? acquireOid.getAsLong() : oid;
+        int newPosition = position < 0 ? acquirePosition.getAsInt() : position;
+        if (newOid == oid && newPosition == position) {
             return this;
         }
         return new IndexReference(
-                ident,
-                granularity,
-                type,
-                columnPolicy,
-                indexType,
-                nullable,
-                hasDocValues,
-                position,
-                oidSupplier.getAsLong(),
-                isDropped,
-                defaultExpression,
-                columns,
-                analyzer
+            ident,
+            granularity,
+            type,
+            indexType,
+            nullable,
+            hasDocValues,
+            newPosition,
+            newOid,
+            isDropped,
+            defaultExpression,
+            columns,
+            analyzer
         );
     }
 
@@ -264,13 +268,30 @@ public class IndexReference extends SimpleReference {
             ident,
             granularity,
             type,
-            columnPolicy,
             indexType,
             nullable,
             hasDocValues,
             position,
             oid,
             dropped,
+            defaultExpression,
+            columns,
+            analyzer
+        );
+    }
+
+    @Override
+    public IndexReference withValueType(DataType<?> newType) {
+        return new IndexReference(
+            ident,
+            granularity,
+            newType,
+            indexType,
+            nullable,
+            hasDocValues,
+            position,
+            oid,
+            isDropped,
             defaultExpression,
             columns,
             analyzer
@@ -297,7 +318,6 @@ public class IndexReference extends SimpleReference {
                 ident,
                 granularity,
                 type,
-                columnPolicy,
                 indexType,
                 nullable,
                 hasDocValues,

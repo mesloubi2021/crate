@@ -19,9 +19,6 @@
 
 package org.elasticsearch.common.xcontent;
 
-import org.elasticsearch.common.xcontent.ObjectParser.NamedObjectParser;
-import org.elasticsearch.common.xcontent.ObjectParser.ValueType;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,6 +26,9 @@ import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
+
+import org.elasticsearch.common.xcontent.ObjectParser.NamedObjectParser;
+import org.elasticsearch.common.xcontent.ObjectParser.ValueType;
 
 /**
  * Like {@link ObjectParser} but works with objects that have constructors whose arguments are mixed in with its other settings. Queries are
@@ -412,7 +412,7 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
         private void queue(Consumer<Value> queueMe) {
             assert targetObject == null : "Don't queue after the targetObject has been built! Just apply the consumer directly.";
             if (queuedFields == null) {
-                @SuppressWarnings({"unchecked", "rawtypes"})
+                @SuppressWarnings({"unchecked"})
                 Consumer<Value>[] queuedFields = new Consumer[numberOfFields];
                 this.queuedFields = queuedFields;
             }
@@ -434,9 +434,13 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
              */
             StringBuilder message = null;
             for (int i = 0; i < constructorArgs.length; i++) {
-                if (constructorArgs[i] != null) continue;
+                if (constructorArgs[i] != null) {
+                    continue;
+                }
                 ConstructorArgInfo arg = constructorArgInfos.get(i);
-                if (false == arg.required) continue;
+                if (false == arg.required) {
+                    continue;
+                }
                 if (message == null) {
                     message = new StringBuilder("Required [").append(arg.field);
                 } else {

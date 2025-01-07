@@ -22,21 +22,32 @@
 package io.crate.analyze;
 
 
-import org.elasticsearch.common.settings.Setting;
-
 import java.util.Map;
 
+import org.elasticsearch.common.settings.Setting;
+
 public final class SnapshotSettings {
+
+    private SnapshotSettings() {}
 
     public static final Setting<Boolean> IGNORE_UNAVAILABLE = Setting.boolSetting("ignore_unavailable", false);
 
     public static final Setting<Boolean> WAIT_FOR_COMPLETION = Setting.boolSetting("wait_for_completion", false);
 
+    public static final Setting<String> SCHEMA_RENAME_PATTERN = Setting.simpleString("schema_rename_pattern", "(.+)");
+
+    public static final Setting<String> SCHEMA_RENAME_REPLACEMENT = Setting.simpleString("schema_rename_replacement", "$1");
+
+    public static final Setting<String> TABLE_RENAME_PATTERN = Setting.simpleString("table_rename_pattern", "(.+)");
+
+    public static final Setting<String> TABLE_RENAME_REPLACEMENT = Setting.simpleString("table_rename_replacement", "$1");
+
     public static final Map<String, Setting<?>> SETTINGS = Map.of(
         IGNORE_UNAVAILABLE.getKey(), IGNORE_UNAVAILABLE,
-        WAIT_FOR_COMPLETION.getKey(), WAIT_FOR_COMPLETION
+        WAIT_FOR_COMPLETION.getKey(), WAIT_FOR_COMPLETION,
+        SCHEMA_RENAME_PATTERN.getKey(), SCHEMA_RENAME_PATTERN,
+        SCHEMA_RENAME_REPLACEMENT.getKey(), SCHEMA_RENAME_REPLACEMENT,
+        TABLE_RENAME_PATTERN.getKey(), TABLE_RENAME_PATTERN,
+        TABLE_RENAME_REPLACEMENT.getKey(), TABLE_RENAME_REPLACEMENT
     );
-
-    private SnapshotSettings() {
-    }
 }

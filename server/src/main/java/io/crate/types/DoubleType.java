@@ -23,30 +23,31 @@ package io.crate.types;
 
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.math.BigInteger;
+import java.util.List;
 import java.util.function.Function;
 
 import org.apache.lucene.document.DoublePoint;
-import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.SortedNumericDocValuesField;
-import org.apache.lucene.search.IndexOrDocValuesQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.util.NumericUtils;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 
+import ch.randelshofer.fastdoubleparser.JavaDoubleParser;
 import io.crate.Streamer;
 import io.crate.execution.dml.DoubleIndexer;
 import io.crate.execution.dml.ValueIndexer;
 import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.Reference;
 import io.crate.metadata.RelationName;
+import io.crate.statistics.ColumnStatsSupport;
 
 public class DoubleType extends DataType<Double> implements FixedWidthType, Streamer<Double> {
 
     public static final DoubleType INSTANCE = new DoubleType();
     public static final int ID = 6;
+    public static final int PRECISION = 53;
     public static final int DOUBLE_SIZE = (int) RamUsageEstimator.shallowSizeOfInstance(Double.class);
     private static final StorageSupport<Double> STORAGE = new StorageSupport<>(
         true,
@@ -54,8 +55,14 @@ public class DoubleType extends DataType<Double> implements FixedWidthType, Stre
         new EqQuery<Double>() {
 
             @Override
-            public Query termQuery(String field, Double value) {
-                return DoublePoint.newExactQuery(field, value);
+            public Query termQuery(String field, Double value, boolean hasDocValues, boolean isIndexed) {
+                if (isIndexed) {
+                    return DoublePoint.newExactQuery(field, value);
+                }
+                if (hasDocValues) {
+                    return SortedNumericDocValuesField.newSlowExactQuery(field, NumericUtils.doubleToSortableLong(value));
+                }
+                return null;
             }
 
             @Override
@@ -64,7 +71,8 @@ public class DoubleType extends DataType<Double> implements FixedWidthType, Stre
                                     Double upperTerm,
                                     boolean includeLower,
                                     boolean includeUpper,
-                                    boolean hasDocValues) {
+                                    boolean hasDocValues,
+                                    boolean isIndexed) {
                 double lower;
                 if (lowerTerm == null) {
                     lower = Double.NEGATIVE_INFINITY;
@@ -78,16 +86,27 @@ public class DoubleType extends DataType<Double> implements FixedWidthType, Stre
                 } else {
                     upper = includeUpper ? upperTerm : DoublePoint.nextDown(upperTerm);
                 }
-                Query indexQuery = DoublePoint.newRangeQuery(field, lower, upper);
-                if (hasDocValues) {
-                    Query dvQuery = SortedNumericDocValuesField.newSlowRangeQuery(
-                            field,
-                            NumericUtils.doubleToSortableLong(lower),
-                            NumericUtils.doubleToSortableLong(upper)
-                    );
-                    return new IndexOrDocValuesQuery(indexQuery, dvQuery);
+                if (isIndexed) {
+                    return DoublePoint.newRangeQuery(field, lower, upper);
                 }
-                return indexQuery;
+                if (hasDocValues) {
+                    return SortedNumericDocValuesField.newSlowRangeQuery(
+                        field,
+                        NumericUtils.doubleToSortableLong(lower),
+                        NumericUtils.doubleToSortableLong(upper));
+                }
+                return null;
+            }
+
+            @Override
+            public Query termsQuery(String field, List<Double> nonNullValues, boolean hasDocValues, boolean isIndexed) {
+                if (isIndexed) {
+                    return DoublePoint.newSetQuery(field, nonNullValues);
+                }
+                if (hasDocValues) {
+                    return SortedNumericDocValuesField.newSlowSetQuery(field, nonNullValues.stream().mapToLong(NumericUtils::doubleToSortableLong).toArray());
+                }
+                return null;
             }
         }
     ) {
@@ -95,14 +114,13 @@ public class DoubleType extends DataType<Double> implements FixedWidthType, Stre
         @Override
         public ValueIndexer<Number> valueIndexer(RelationName table,
                                                  Reference ref,
-                                                 Function<String, FieldType> getFieldType,
                                                  Function<ColumnIdent, Reference> getRef) {
-            return new DoubleIndexer(ref, getFieldType.apply(ref.storageIdent()));
+            return new DoubleIndexer(ref);
         }
     };
 
-    private static final BigInteger DOUBLE_MAX = BigDecimal.valueOf(Double.MAX_VALUE).toBigInteger();
-    private static final BigInteger DOUBLE_MIN = BigDecimal.valueOf(-Double.MAX_VALUE).toBigInteger();
+    private static final BigDecimal DOUBLE_MAX = BigDecimal.valueOf(Double.MAX_VALUE);
+    private static final BigDecimal DOUBLE_MIN = BigDecimal.valueOf(-Double.MAX_VALUE);
 
     private DoubleType() {
     }
@@ -123,6 +141,11 @@ public class DoubleType extends DataType<Double> implements FixedWidthType, Stre
     }
 
     @Override
+    public Integer numericPrecision() {
+        return PRECISION;
+    }
+
+    @Override
     public Streamer<Double> streamer() {
         return this;
     }
@@ -134,10 +157,14 @@ public class DoubleType extends DataType<Double> implements FixedWidthType, Stre
         } else if (value instanceof Double d) {
             return d;
         } else if (value instanceof String s) {
-            return Double.valueOf(s);
+            return JavaDoubleParser.parseDouble(s);
         } else if (value instanceof BigDecimal bigDecimalValue) {
-            if (DOUBLE_MAX.compareTo(bigDecimalValue.toBigInteger()) <= 0
-                || DOUBLE_MIN.compareTo(bigDecimalValue.toBigInteger()) >= 0) {
+            // Preferring compareTo over equals as it gives safer equality check.
+            // From the compareTo docs:
+            // Two BigDecimal objects that are equal in value but have a different scale (like 2.0 and 2.00)
+            // are considered equal by this method.
+            if (DOUBLE_MAX.compareTo(bigDecimalValue) <= 0
+                || DOUBLE_MIN.compareTo(bigDecimalValue) >= 0) {
                 throw new IllegalArgumentException(getName() + " value out of range: " + value);
             }
             return bigDecimalValue.doubleValue();
@@ -185,6 +212,11 @@ public class DoubleType extends DataType<Double> implements FixedWidthType, Stre
     @Override
     public StorageSupport<Double> storageSupport() {
         return STORAGE;
+    }
+
+    @Override
+    public ColumnStatsSupport<Double> columnStatsSupport() {
+        return ColumnStatsSupport.singleValued(Double.class, DoubleType.this);
     }
 
     @Override

@@ -24,20 +24,18 @@ package io.crate.planner.optimizer.symbol.rule;
 import static io.crate.planner.optimizer.matcher.Pattern.typeOf;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 
 import io.crate.expression.operator.LikeOperators;
 import io.crate.expression.scalar.cast.CastMode;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.Symbol;
-import io.crate.expression.symbol.SymbolType;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Reference;
 import io.crate.planner.optimizer.matcher.Capture;
 import io.crate.planner.optimizer.matcher.Captures;
 import io.crate.planner.optimizer.matcher.Pattern;
-import io.crate.planner.optimizer.symbol.FunctionSymbolResolver;
+import io.crate.planner.optimizer.symbol.FunctionLookup;
 import io.crate.planner.optimizer.symbol.Rule;
 import io.crate.types.StringType;
 
@@ -48,12 +46,12 @@ public class SwapCastsInLikeOperators implements Rule<Function> {
     private final Capture<Function> castCapture;
     private final Pattern<Function> pattern;
 
-    public SwapCastsInLikeOperators(FunctionSymbolResolver functionResolver) {
+    public SwapCastsInLikeOperators() {
         this.castCapture = new Capture<>();
         this.pattern = typeOf(Function.class)
             .with(f -> LIKE_OPERATORS.contains(f.name()))
-            .with(f -> f.arguments().get(1).symbolType() == SymbolType.LITERAL)
-            .with(f -> Optional.of(f.arguments().get(0)), typeOf(Function.class).capturedAs(castCapture)
+            .with(f -> f.arguments().get(1).symbolType().isValueOrParameterSymbol())
+            .with(f -> f.arguments().get(0), typeOf(Function.class).capturedAs(castCapture)
                 .with(f -> f.isCast())
                 .with(f -> f.arguments().get(0) instanceof Reference ref && ref.valueType().id() == StringType.ID)
             );
@@ -65,13 +63,24 @@ public class SwapCastsInLikeOperators implements Rule<Function> {
     }
 
     @Override
-    public Symbol apply(Function likeFunction, Captures captures, NodeContext nodeCtx, Symbol parentNode) {
-        var literal = likeFunction.arguments().get(1);
+    public Symbol apply(Function likeFunction, Captures captures, NodeContext nodeCtx, FunctionLookup functionLookup, Symbol parentNode) {
+        var literalOrParam = likeFunction.arguments().get(1);
         var castFunction = captures.get(castCapture);
         var reference = castFunction.arguments().get(0);
         CastMode castMode = castFunction.castMode();
         assert castMode != null : "Pattern matched, function must be a cast";
-        Symbol castedLiteral = literal.cast(StringType.INSTANCE, castMode);
-        return new Function(likeFunction.signature(), List.of(reference, castedLiteral), likeFunction.valueType());
+        Symbol castedLiteral = literalOrParam.cast(StringType.INSTANCE, castMode);
+        List<Symbol> newArgs;
+        if (likeFunction.arguments().size() == 3) {
+            // Don't lose ESCAPE character.
+            newArgs = List.of(reference, castedLiteral, likeFunction.arguments().get(2));
+        } else {
+            newArgs = List.of(reference, castedLiteral);
+        }
+        return new Function(
+            likeFunction.signature(),
+            newArgs,
+            likeFunction.valueType()
+        );
     }
 }

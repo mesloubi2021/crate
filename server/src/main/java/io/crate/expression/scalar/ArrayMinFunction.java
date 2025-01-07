@@ -27,6 +27,8 @@ import static io.crate.expression.scalar.array.ArrayArgumentValidators.ensureInn
 import java.util.List;
 
 import io.crate.data.Input;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -40,46 +42,48 @@ public class ArrayMinFunction<T> extends Scalar<T, List<T>> {
 
     public static final String NAME = "array_min";
 
-    private final DataType dataType;
+    private final DataType<T> dataType;
 
-    public static void register(ScalarFunctionModule module) {
+    public static void register(Functions.Builder module) {
 
-        module.register(
-            Signature.scalar(
-                NAME,
-                new ArrayType(DataTypes.NUMERIC).getTypeSignature(),
-                DataTypes.NUMERIC.getTypeSignature()
-            ),
+        module.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes(new ArrayType<>(DataTypes.NUMERIC).getTypeSignature())
+                .returnType(DataTypes.NUMERIC.getTypeSignature())
+                .features(Feature.DETERMINISTIC)
+                .build(),
             ArrayMinFunction::new
         );
 
         for (var supportedType : DataTypes.PRIMITIVE_TYPES) {
-            module.register(
-                Signature.scalar(
-                    NAME,
-                    new ArrayType(supportedType).getTypeSignature(),
-                    supportedType.getTypeSignature()
-                ),
+            module.add(
+                Signature.builder(NAME, FunctionType.SCALAR)
+                    .argumentTypes(new ArrayType<>(supportedType).getTypeSignature())
+                    .returnType(supportedType.getTypeSignature())
+                    .features(Feature.DETERMINISTIC)
+                    .build(),
                 ArrayMinFunction::new
             );
         }
     }
 
+    @SuppressWarnings("unchecked")
     private ArrayMinFunction(Signature signature, BoundSignature boundSignature) {
         super(signature, boundSignature);
-        this.dataType = signature.getReturnType().createType();
+        this.dataType = (DataType<T>) signature.getReturnType().createType();
         ensureInnerTypeIsNotUndefined(boundSignature.argTypes(), signature.getName().name());
     }
 
     @Override
-    public T evaluate(TransactionContext txnCtx, NodeContext nodeCtx, Input[] args) {
-        List<T> values = (List) args[0].value();
+    @SafeVarargs
+    public final T evaluate(TransactionContext txnCtx, NodeContext nodeCtx, Input<List<T>> ... args) {
+        List<T> values = args[0].value();
         if (values == null || values.isEmpty()) {
             return null;
         }
 
         // Taking first element in order not to initialize min
-        // with type dependant TYPE.MAX_VALUE.
+        // with type dependent TYPE.MAX_VALUE.
         T min = values.get(0);
 
         for (int i = 1; i < values.size(); i++) {

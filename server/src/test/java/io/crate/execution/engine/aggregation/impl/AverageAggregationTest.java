@@ -21,13 +21,12 @@
 
 package io.crate.execution.engine.aggregation.impl;
 
-import static io.crate.testing.Asserts.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 import java.util.List;
 
-import org.assertj.core.api.Assertions;
 import org.assertj.core.data.Offset;
 import org.elasticsearch.Version;
 import org.joda.time.Period;
@@ -40,6 +39,8 @@ import io.crate.execution.engine.aggregation.impl.average.AverageAggregation;
 import io.crate.execution.engine.aggregation.impl.average.numeric.NumericAverageState;
 import io.crate.expression.symbol.Literal;
 import io.crate.metadata.FunctionImplementation;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Scalar;
 import io.crate.metadata.SearchPath;
 import io.crate.metadata.functions.Signature;
 import io.crate.operation.aggregation.AggregationTestCase;
@@ -49,33 +50,33 @@ import io.crate.types.NumericType;
 
 public class AverageAggregationTest extends AggregationTestCase {
 
-    private static final Signature NUMERIC_AVG_SIGNATURE = Signature.aggregate(
-        AverageAggregation.NAME,
-        DataTypes.NUMERIC.getTypeSignature(),
-        DataTypes.NUMERIC.getTypeSignature()
-    );
+    private static final Signature NUMERIC_AVG_SIGNATURE = Signature.builder(AverageAggregation.NAME, FunctionType.AGGREGATE)
+            .argumentTypes(DataTypes.NUMERIC.getTypeSignature())
+            .returnType(DataTypes.NUMERIC.getTypeSignature())
+            .features(Scalar.Feature.DETERMINISTIC)
+            .build();
 
     private Object executeAvgAgg(DataType<?> argumentType, Object[][] data) throws Exception {
         return executeAggregation(
-            Signature.aggregate(
-                AverageAggregation.NAME,
-                argumentType.getTypeSignature(),
-                DataTypes.DOUBLE.getTypeSignature()
-            ),
-            data,
-            List.of()
+                Signature.builder(AverageAggregation.NAME, FunctionType.AGGREGATE)
+                        .argumentTypes(argumentType.getTypeSignature())
+                        .returnType(DataTypes.DOUBLE.getTypeSignature())
+                        .features(Scalar.Feature.DETERMINISTIC)
+                        .build(),
+                data,
+                List.of()
         );
     }
 
     private Object executeIntervalAvgAgg(Object[][] data) throws Exception {
         return executeAggregation(
-            Signature.aggregate(
-                AverageAggregation.NAME,
-                DataTypes.INTERVAL.getTypeSignature(),
-                DataTypes.INTERVAL.getTypeSignature()
-            ),
-            data,
-            List.of()
+                Signature.builder(AverageAggregation.NAME, FunctionType.AGGREGATE)
+                        .argumentTypes(DataTypes.INTERVAL.getTypeSignature())
+                        .returnType(DataTypes.INTERVAL.getTypeSignature())
+                        .features(Scalar.Feature.DETERMINISTIC)
+                        .build(),
+                data,
+                List.of()
         );
     }
 
@@ -113,7 +114,7 @@ public class AverageAggregationTest extends AggregationTestCase {
         }
 
         // AverageAggregation returns double
-        Assertions.assertThat(executeAvgAgg(DataTypes.DOUBLE, data)).isEqualTo(10000.1d);
+        assertThat(executeAvgAgg(DataTypes.DOUBLE, data)).isEqualTo(10000.1d);
     }
 
     @Test
@@ -124,7 +125,7 @@ public class AverageAggregationTest extends AggregationTestCase {
         }
 
         //AverageAggregation returns double
-        Assertions.assertThat((double) executeAvgAgg(DataTypes.FLOAT, data))
+        assertThat((double) executeAvgAgg(DataTypes.FLOAT, data))
             .isEqualTo(10000.1d, Offset.offset(0.1d));
     }
 
@@ -220,7 +221,7 @@ public class AverageAggregationTest extends AggregationTestCase {
 
     @Test
     public void test_avg_numeric_with_precision_and_scale_on_double_non_doc_values() {
-        var type = NumericType.of(16, 2);
+        var type = new NumericType(16, 2);
         var expected = type.implicitCast(12.4357);
         assertThat(expected).hasToString("12.44");
 

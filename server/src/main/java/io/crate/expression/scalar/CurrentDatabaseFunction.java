@@ -24,6 +24,8 @@ package io.crate.expression.scalar;
 import io.crate.Constants;
 import io.crate.data.Input;
 import io.crate.metadata.FunctionName;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -36,12 +38,13 @@ final class CurrentDatabaseFunction extends Scalar<String, Void> {
 
     private static final FunctionName FQN = new FunctionName(PgCatalogSchemaInfo.NAME, "current_database");
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                FQN,
-                DataTypes.STRING.getTypeSignature()
-            ),
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder(FQN, FunctionType.SCALAR)
+                .argumentTypes()
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Feature.DETERMINISTIC, Feature.NOTNULL)
+                .build(),
             CurrentDatabaseFunction::new
         );
     }

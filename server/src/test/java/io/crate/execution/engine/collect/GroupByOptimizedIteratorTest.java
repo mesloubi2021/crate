@@ -21,21 +21,22 @@
 
 package io.crate.execution.engine.collect;
 
+import static io.crate.operation.aggregation.AggregationTestCase.closeShard;
+import static io.crate.operation.aggregation.AggregationTestCase.createCollectPhase;
+import static io.crate.operation.aggregation.AggregationTestCase.createCollectTask;
+import static io.crate.operation.aggregation.AggregationTestCase.newStartedPrimaryShard;
 import static io.crate.testing.TestingHelpers.createNodeContext;
-import static org.hamcrest.Matchers.instanceOf;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
@@ -51,7 +52,7 @@ import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.index.engine.Engine;
-import org.elasticsearch.index.mapper.KeywordFieldMapper;
+import org.elasticsearch.index.shard.IndexShard;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -59,16 +60,32 @@ import io.crate.data.BatchIterator;
 import io.crate.data.Row;
 import io.crate.data.breaker.RamAccounting;
 import io.crate.data.testing.BatchIteratorTester;
+import io.crate.data.testing.BatchIteratorTester.ResultOrder;
+import io.crate.exceptions.JobKilledException;
+import io.crate.execution.dml.StringIndexer;
+import io.crate.execution.dsl.projection.GroupProjection;
 import io.crate.execution.engine.aggregation.AggregationContext;
 import io.crate.execution.engine.aggregation.impl.CountAggregation;
 import io.crate.execution.engine.fetch.ReaderContext;
+import io.crate.expression.InputFactory;
 import io.crate.expression.InputRow;
 import io.crate.expression.reference.doc.lucene.CollectorContext;
 import io.crate.expression.reference.doc.lucene.LuceneCollectorExpression;
+import io.crate.expression.reference.doc.lucene.LuceneReferenceResolver;
 import io.crate.expression.symbol.AggregateMode;
+import io.crate.expression.symbol.InputColumn;
+import io.crate.lucene.LuceneQueryBuilder;
 import io.crate.memory.OnHeapMemoryManager;
+import io.crate.metadata.IndexType;
 import io.crate.metadata.NodeContext;
+import io.crate.metadata.ReferenceIdent;
+import io.crate.metadata.RelationName;
+import io.crate.metadata.RowGranularity;
+import io.crate.metadata.SimpleReference;
+import io.crate.metadata.doc.DocTableInfo;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
+import io.crate.testing.TestingHelpers;
+import io.crate.types.DataTypes;
 
 public class GroupByOptimizedIteratorTest extends CrateDummyClusterServiceUnitTest {
 
@@ -127,7 +144,7 @@ public class GroupByOptimizedIteratorTest extends CrateDummyClusterServiceUnitTe
             Version.CURRENT,
             new InputRow(Collections.singletonList(inExpr)),
             new MatchAllDocsQuery(),
-            new CollectorContext(Set.of(), Function.identity()),
+            new CollectorContext(() -> null),
             AggregateMode.ITER_FINAL
         );
     }
@@ -139,7 +156,7 @@ public class GroupByOptimizedIteratorTest extends CrateDummyClusterServiceUnitTe
         for (int i = 0; i < 10; i++) {
             Document doc = new Document();
             BytesRef value = new BytesRef(Integer.toString(i));
-            doc.add(new Field(columnName, value, KeywordFieldMapper.Defaults.FIELD_TYPE));
+            doc.add(new Field(columnName, value, StringIndexer.FIELD_TYPE));
             iw.addDocument(doc);
         }
         iw.commit();
@@ -156,9 +173,8 @@ public class GroupByOptimizedIteratorTest extends CrateDummyClusterServiceUnitTe
                     () -> {}
                 ),
                 "x"
-            ),
-            is(true)
-        );
+            )
+        ).isTrue();
     }
 
     @Test
@@ -168,7 +184,7 @@ public class GroupByOptimizedIteratorTest extends CrateDummyClusterServiceUnitTe
         for (int i = 0; i < 10; i++) {
             Document doc = new Document();
             BytesRef value = new BytesRef("1");
-            doc.add(new Field(columnName, value, KeywordFieldMapper.Defaults.FIELD_TYPE));
+            doc.add(new Field(columnName, value, StringIndexer.FIELD_TYPE));
             iw.addDocument(doc);
         }
         iw.commit();
@@ -185,27 +201,74 @@ public class GroupByOptimizedIteratorTest extends CrateDummyClusterServiceUnitTe
                     () -> {}
                 ),
                 "x"
-            ),
-            is(false)
+            )
+        ).isFalse();
+    }
+
+    @Test
+    public void test_create_optimized_iterator_for_single_string_key() throws Exception {
+        GroupProjection groupProjection = new GroupProjection(
+            List.of(new InputColumn(0, DataTypes.STRING)),
+            List.of(),
+            AggregateMode.ITER_PARTIAL,
+            RowGranularity.SHARD
         );
+        var reference = new SimpleReference(
+            new ReferenceIdent(new RelationName("doc", "test"), "x"),
+            RowGranularity.DOC,
+            DataTypes.STRING,
+            IndexType.PLAIN,
+            true,
+            true,
+            0,
+            111,
+            false,
+            null
+        );
+        IndexShard shard = newStartedPrimaryShard(
+            TestingHelpers.createNodeContext(),
+            List.of(reference),
+            THREAD_POOL
+        );
+        var collectPhase = createCollectPhase(List.of(reference), List.of(groupProjection));
+        var collectTask = createCollectTask(shard, collectPhase, Version.CURRENT);
+        var nodeCtx = createNodeContext();
+
+        var it = GroupByOptimizedIterator.tryOptimizeSingleStringKey(
+            shard,
+            mock(DocTableInfo.class),
+            new LuceneQueryBuilder(nodeCtx),
+            mock(BigArrays.class),
+            new InputFactory(nodeCtx),
+            new DocInputFactory(
+                nodeCtx,
+                new LuceneReferenceResolver(shard.shardId().getIndexName(), List.of(), (_) -> false)
+            ),
+            collectPhase,
+            collectTask
+        );
+        assertThat(it).isNotNull();
+
+        collectTask.kill(JobKilledException.of(null));
+        closeShard(shard);
     }
 
     @Test
     public void test_optimized_iterator_behaviour() throws Exception {
-        var tester = BatchIteratorTester.forRows(() -> createBatchIterator(() -> {}));
+        var tester = BatchIteratorTester.forRows(() -> createBatchIterator(() -> {}), ResultOrder.ANY);
         tester.verifyResultAndEdgeCaseBehaviour(expectedResult);
     }
 
     @Test
     public void test_optimized_iterator_stop_processing_on_kill() throws Exception {
         Throwable expectedException = stopOnInterrupting(it -> it.kill(new InterruptedException("killed")));
-        assertThat(expectedException, instanceOf(InterruptedException.class));
+        assertThat(expectedException).isInstanceOf(InterruptedException.class);
     }
 
     @Test
     public void test_optimized_iterator_stop_processing_on_close() throws Exception {
         Throwable expectedException = stopOnInterrupting(BatchIterator::close);
-        assertThat(expectedException, instanceOf(IllegalStateException.class));
+        assertThat(expectedException).isInstanceOf(IllegalStateException.class);
     }
 
     private Throwable stopOnInterrupting(Consumer<BatchIterator<Row>> interrupt) throws Exception {

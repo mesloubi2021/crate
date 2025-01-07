@@ -21,33 +21,35 @@
 
 package io.crate.expression.scalar.string;
 
-import io.crate.common.Hex;
-import io.crate.expression.scalar.ScalarFunctionModule;
-import io.crate.expression.scalar.UnaryScalar;
-import io.crate.metadata.functions.Signature;
-import io.crate.types.DataTypes;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
+
 import org.elasticsearch.common.hash.MessageDigests;
 
-import java.nio.charset.StandardCharsets;
-import java.security.DigestException;
-import java.security.MessageDigest;
-import java.util.function.Function;
-import java.util.function.Supplier;
+import io.crate.common.Hex;
+import io.crate.expression.scalar.UnaryScalar;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
+import io.crate.metadata.Scalar;
+import io.crate.metadata.functions.Signature;
+import io.crate.types.DataTypes;
 
 public final class HashFunctions {
 
-    public static void register(ScalarFunctionModule module) {
-        register(module, "md5", HashMethod.MD5::digest);
-        register(module, "sha1", HashMethod.SHA1::digest);
+    public static void register(Functions.Builder builder) {
+        register(builder, "md5", HashMethod.MD5::digest);
+        register(builder, "sha1", HashMethod.SHA1::digest);
     }
 
-    private static void register(ScalarFunctionModule module, String name, Function<String, String> func) {
-        module.register(
-            Signature.scalar(
-                name,
-                DataTypes.STRING.getTypeSignature(),
-                DataTypes.STRING.getTypeSignature()
-            ),
+    private static void register(Functions.Builder builder, String name, UnaryOperator<String> func) {
+        builder.add(
+            Signature.builder(name, FunctionType.SCALAR)
+                .argumentTypes(DataTypes.STRING.getTypeSignature())
+                .returnType(DataTypes.STRING.getTypeSignature())
+                .features(Scalar.Feature.DETERMINISTIC, Scalar.Feature.STRICTNULL)
+                .build(),
             (signature, boundSignature) ->
                 new UnaryScalar<>(signature, boundSignature, DataTypes.STRING, func)
         );
@@ -70,16 +72,8 @@ public final class HashFunctions {
 
         public String digest(String input) {
             MessageDigest messageDigest = messageDigestSupplier.get();
-            byte[] digest = new byte[messageDigest.getDigestLength()];
-            messageDigest.update(input.getBytes(StandardCharsets.UTF_8));
-            try {
-                messageDigest.digest(digest, 0, digest.length);
-            } catch (DigestException e) {
-                throw new RuntimeException("Error computing digest.", e);
-            }
-            return Hex.encodeHexString(digest);
+            byte[] result = messageDigest.digest(input.getBytes(StandardCharsets.UTF_8));
+            return Hex.encodeHexString(result);
         }
     }
-
-
 }

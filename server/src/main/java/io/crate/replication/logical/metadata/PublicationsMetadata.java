@@ -21,23 +21,23 @@
 
 package io.crate.replication.logical.metadata;
 
-import io.crate.metadata.RelationName;
-import org.elasticsearch.ElasticsearchParseException;
-import org.elasticsearch.Version;
-import org.elasticsearch.cluster.AbstractNamedDiffable;
-import org.elasticsearch.cluster.metadata.Metadata;
-import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.common.xcontent.XContentParser;
-
-import org.jetbrains.annotations.Nullable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+
+import org.elasticsearch.ElasticsearchParseException;
+import org.elasticsearch.Version;
+import org.elasticsearch.cluster.AbstractNamedDiffable;
+import org.elasticsearch.cluster.metadata.Metadata;
+import org.elasticsearch.common.io.stream.StreamInput;
+import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.xcontent.XContentParser;
+import org.jetbrains.annotations.Nullable;
+
+import io.crate.metadata.RelationName;
 
 public class PublicationsMetadata extends AbstractNamedDiffable<Metadata.Custom> implements Metadata.Custom {
 
@@ -114,27 +114,6 @@ public class PublicationsMetadata extends AbstractNamedDiffable<Metadata.Custom>
      *     <li>value of "tables" contains a list of all tables which are part of this publication</li>
      * </ul>
      */
-    @Override
-    public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        builder.startObject(TYPE);
-        for (var entry : publicationByName.entrySet()) {
-            var publication = entry.getValue();
-            builder.startObject(entry.getKey());
-            {
-                builder.field("owner", publication.owner());
-                builder.field("forAllTables", publication.isForAllTables());
-                builder.startArray("tables");
-                for (var table : publication.tables()) {
-                    builder.value(table.indexNameOrAlias());
-                }
-                builder.endArray();
-            }
-            builder.endObject();
-        }
-        builder.endObject();
-        return builder;
-    }
-
     public static PublicationsMetadata fromXContent(XContentParser parser) throws IOException {
         Map<String, Publication> publications = new HashMap<>();
 
@@ -202,5 +181,14 @@ public class PublicationsMetadata extends AbstractNamedDiffable<Metadata.Custom>
     @Override
     public String toString() {
         return "PublicationsMetadata{" + publicationByName + "}";
+    }
+
+    public boolean isPublished(RelationName relation) {
+        for (Publication publication : publications().values()) {
+            if (publication.isForAllTables() || publication.tables().contains(relation)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

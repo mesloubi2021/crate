@@ -23,9 +23,11 @@ package io.crate.expression.scalar.timestamp;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.EnumSet;
 
 import io.crate.data.Input;
-import io.crate.expression.scalar.ScalarFunctionModule;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
@@ -37,12 +39,13 @@ public final class NowFunction extends Scalar<Long, Object> {
 
     public static final String NAME = "now";
 
-    public static void register(ScalarFunctionModule module) {
-        module.register(
-            Signature.scalar(
-                NAME,
-                DataTypes.TIMESTAMPZ.getTypeSignature()
-            ).withFeatures(Scalar.NO_FEATURES),
+    public static void register(Functions.Builder module) {
+        module.add(
+            Signature.builder(NAME, FunctionType.SCALAR)
+                .argumentTypes()
+                .returnType(DataTypes.TIMESTAMPZ.getTypeSignature())
+                .features(EnumSet.of(Feature.NOTNULL))
+                .build(),
             NowFunction::new
         );
     }

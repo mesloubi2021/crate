@@ -31,7 +31,7 @@ import org.jetbrains.annotations.Nullable;
 import com.carrotsearch.hppc.IntObjectHashMap;
 import com.carrotsearch.hppc.IntObjectMap;
 
-import io.crate.common.collections.Lists2;
+import io.crate.common.collections.Lists;
 import io.crate.common.collections.MapBuilder;
 import io.crate.types.ArrayType;
 import io.crate.types.BitStringType;
@@ -62,7 +62,7 @@ public class PGTypes {
         .put(DataTypes.TIMESTAMP, TimestampType.INSTANCE)
         .put(DataTypes.DATE, DateType.INSTANCE)
         .put(DataTypes.IP, VarCharType.INSTANCE) // postgres has no IP type, so map it to varchar - it matches the client representation
-        .put(DataTypes.UNDEFINED, VarCharType.INSTANCE)
+        .put(DataTypes.UNDEFINED, UnknownType.INSTANCE)
         .put(DataTypes.GEO_SHAPE, JsonType.INSTANCE)
         .put(io.crate.types.JsonType.INSTANCE, JsonType.INSTANCE)
         .put(DataTypes.GEO_POINT, PointType.INSTANCE)
@@ -86,6 +86,7 @@ public class PGTypes {
         .put(new ArrayType<>(DataTypes.CHARACTER), PGArray.CHARACTER_ARRAY)
         .put(new ArrayType<>(DataTypes.IP), PGArray.VARCHAR_ARRAY)
         .put(new ArrayType<>(DataTypes.UNTYPED_OBJECT), PGArray.JSON_ARRAY)
+        .put(new ArrayType<>(DataTypes.UNDEFINED), PGArray.JSON_ARRAY)
         .put(new ArrayType<>(DataTypes.GEO_POINT), PGArray.POINT_ARRAY)
         .put(new ArrayType<>(DataTypes.GEO_SHAPE), PGArray.JSON_ARRAY)
         .put(new ArrayType<>(DataTypes.INTERVAL), PGArray.INTERVAL_ARRAY)
@@ -170,7 +171,7 @@ public class PGTypes {
             }
 
             case RowType.ID:
-                return new RecordType(Lists2.map(((RowType) type).fieldTypes(), PGTypes::get));
+                return new RecordType(Lists.map(((RowType) type).fieldTypes(), PGTypes::get));
 
             case StringType.ID:
                 return VarCharType.INSTANCE;

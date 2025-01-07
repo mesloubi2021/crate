@@ -26,38 +26,52 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.VisibleForTesting;
 
-import io.crate.common.annotations.VisibleForTesting;
 import io.crate.data.Input;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.FunctionType;
+import io.crate.metadata.Functions;
 import io.crate.metadata.NodeContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.TransactionContext;
 import io.crate.metadata.functions.BoundSignature;
 import io.crate.metadata.functions.Signature;
+import io.crate.role.Roles;
 import io.crate.types.DataTypes;
 import io.crate.types.TypeSignature;
-import io.crate.user.UserLookup;
 
 public class SubstrFunction extends Scalar<String, Object> {
 
     public static final String NAME = "substr";
     public static final String ALIAS = "substring";
 
-    public static void register(ScalarFunctionModule module) {
+    public static void register(Functions.Builder builder) {
         TypeSignature stringType = DataTypes.STRING.getTypeSignature();
         TypeSignature intType = DataTypes.INTEGER.getTypeSignature();
         for (var name : List.of(NAME, ALIAS)) {
-            module.register(
-                Signature.scalar(name, stringType, intType, stringType),
+            builder.add(
+                Signature.builder(name, FunctionType.SCALAR)
+                    .argumentTypes(stringType, intType)
+                    .returnType(stringType)
+                    .features(Feature.DETERMINISTIC)
+                    .build(),
                 SubstrFunction::new
             );
-            module.register(
-                Signature.scalar(name, stringType, intType, intType, stringType),
+            builder.add(
+                Signature.builder(name, FunctionType.SCALAR)
+                    .argumentTypes(stringType, intType, intType)
+                    .returnType(stringType)
+                    .features(Feature.DETERMINISTIC)
+                    .build(),
                 SubstrFunction::new
             );
-            module.register(
-                Signature.scalar(name, stringType, stringType, stringType),
+            builder.add(
+                Signature.builder(name, FunctionType.SCALAR)
+                    .argumentTypes(stringType, stringType)
+                    .returnType(stringType)
+                    .features(Feature.DETERMINISTIC)
+                    .build(),
                 SubstrExtractFunction::new
             );
         }
@@ -146,7 +160,7 @@ public class SubstrFunction extends Scalar<String, Object> {
         }
 
         @Override
-        public Scalar<String, String> compile(List<Symbol> arguments, String currentUser, UserLookup userLookup) {
+        public Scalar<String, String> compile(List<Symbol> arguments, String currentUser, Roles roles) {
             Symbol patternSymbol = arguments.get(1);
             if (patternSymbol instanceof Input<?> input) {
                 String pattern = (String) input.value();

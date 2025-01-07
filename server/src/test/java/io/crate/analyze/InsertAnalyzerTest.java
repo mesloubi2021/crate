@@ -28,6 +28,7 @@ import static io.crate.testing.Asserts.isInputColumn;
 import static io.crate.testing.Asserts.isLiteral;
 import static io.crate.testing.Asserts.isReference;
 import static io.crate.testing.Asserts.toCondition;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
@@ -37,13 +38,19 @@ import java.util.Map;
 import org.junit.Before;
 import org.junit.Test;
 
+import io.crate.analyze.relations.TableFunctionRelation;
 import io.crate.exceptions.ColumnUnknownException;
 import io.crate.exceptions.ColumnValidationException;
+import io.crate.expression.scalar.CurrentDateFunction;
 import io.crate.expression.scalar.SubstrFunction;
+import io.crate.expression.scalar.arithmetic.ArrayFunction;
+import io.crate.expression.scalar.cast.ImplicitCastFunction;
+import io.crate.expression.scalar.timestamp.NowFunction;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.InputColumn;
 import io.crate.expression.symbol.ParameterSymbol;
 import io.crate.expression.symbol.Symbol;
+import io.crate.expression.tablefunctions.ValuesFunction;
 import io.crate.metadata.Reference;
 import io.crate.sql.parser.ParsingException;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
@@ -57,7 +64,7 @@ public class InsertAnalyzerTest extends CrateDummyClusterServiceUnitTest {
 
     @Before
     public void prepare() throws IOException {
-        e = SQLExecutor.builder(clusterService)
+        e = SQLExecutor.of(clusterService)
             .addTable(TableDefinitions.USER_TABLE_DEFINITION)
             .addTable(TableDefinitions.USER_TABLE_CLUSTERED_BY_ONLY_DEFINITION)
             .addTable(
@@ -95,8 +102,7 @@ public class InsertAnalyzerTest extends CrateDummyClusterServiceUnitTest {
                   col3 int default 20 not null,
                   col4 int generated always as ((col2 + col3) * col1 - 2) primary key)
                 """
-            )
-            .build();
+            );
     }
 
     private void assertCompatibleColumns(AnalyzedInsertStatement statement) {
@@ -219,7 +225,7 @@ public class InsertAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         assertThat(statement.onDuplicateKeyAssignments()).hasSize(1);
 
         for (var entry : statement.onDuplicateKeyAssignments().entrySet()) {
-            assertThat(entry.getKey()).isReference().hasName("name");
+            assertThat(entry.getKey()).hasName("name");
             assertThat(entry.getValue()).isLiteral("Arthur", StringType.INSTANCE);
         }
     }
@@ -234,7 +240,7 @@ public class InsertAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         assertThat(statement.onDuplicateKeyAssignments()).hasSize(1);
 
         for (var entry : statement.onDuplicateKeyAssignments().entrySet()) {
-            assertThat(entry.getKey()).isReference().hasName("name");
+            assertThat(entry.getKey()).hasName("name");
             assertThat(entry.getValue()).isExactlyInstanceOf(ParameterSymbol.class);
         }
     }
@@ -248,7 +254,7 @@ public class InsertAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         assertThat(statement.onDuplicateKeyAssignments()).hasSize(1);
 
         for (var entry : statement.onDuplicateKeyAssignments().entrySet()) {
-            assertThat(entry.getKey()).isReference().hasName("name");
+            assertThat(entry.getKey()).hasName("name");
             assertThat(entry.getValue()).isFunction(SubstrFunction.NAME);
             Function function = (Function) entry.getValue();
             assertThat(function.arguments().get(0)).isExactlyInstanceOf(InputColumn.class);
@@ -508,5 +514,32 @@ public class InsertAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         assertThatThrownBy(() -> e.analyze("insert into users (id, id) values (1, 1)"))
             .isExactlyInstanceOf(IllegalArgumentException.class)
             .hasMessage("column \"id\" specified more than once");
+    }
+
+    @Test
+    public void test_non_deterministic_function_is_not_normalized() {
+        AnalyzedInsertStatement analyzedInsertStatement =
+            e.analyze("insert into users(id) values(now()) on conflict (id) do update set date = curdate()");
+        TableFunctionRelation tableFunctionRelation = (TableFunctionRelation) analyzedInsertStatement.subQueryRelation();
+        assertThat(tableFunctionRelation.function())
+            .isFunction(
+                ValuesFunction.NAME,
+                isFunction(
+                    ArrayFunction.NAME,
+                    isFunction(
+                        ImplicitCastFunction.NAME,
+                        isFunction(NowFunction.NAME),
+                        isLiteral("bigint")
+                    )
+                )
+            );
+        assertThat(analyzedInsertStatement.onDuplicateKeyAssignments().values())
+            .satisfiesExactly(
+                isFunction(
+                    ImplicitCastFunction.NAME,
+                    isFunction(CurrentDateFunction.NAME),
+                    isLiteral("timestamp with time zone")
+                )
+            );
     }
 }

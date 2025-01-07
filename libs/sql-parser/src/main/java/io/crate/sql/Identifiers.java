@@ -36,7 +36,7 @@ import io.crate.sql.parser.SqlParser;
 import io.crate.sql.parser.antlr.SqlBaseLexer;
 import io.crate.sql.tree.QualifiedNameReference;
 
-public class Identifiers {
+public final class Identifiers {
 
     private static final Pattern IDENTIFIER = Pattern.compile("(^[a-zA-Z_]+[a-zA-Z0-9_]*)");
     private static final Pattern ESCAPE_REPLACE_RE = Pattern.compile("\"", Pattern.LITERAL);
@@ -66,6 +66,8 @@ public class Identifiers {
         .filter(Keyword::isReserved)
         .map(Keyword::getWord)
         .collect(Collectors.toSet());
+
+    private Identifiers() {}
 
     /**
      * quote and escape the given identifier
@@ -99,7 +101,7 @@ public class Identifiers {
      *   2) the remaining chars are lower cases, digits, or '_'.
      */
     private static boolean quotesNotRequired(String identifier) {
-        assert identifier != null && identifier.length() > 0 : "null or empty idents should not be possible";
+        assert identifier != null && !identifier.isEmpty() : "null or empty idents should not be possible";
 
         char c = identifier.charAt(0);
         if (c != '_' && !isLowerCase(c)) {

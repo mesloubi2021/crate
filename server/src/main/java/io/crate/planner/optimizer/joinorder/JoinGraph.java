@@ -27,11 +27,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
-
+import java.util.function.UnaryOperator;
 
 import io.crate.analyze.relations.QuerySplitter;
-import io.crate.common.collections.Lists2;
+import io.crate.common.collections.Lists;
 import io.crate.common.collections.Maps;
 import io.crate.common.collections.Sets;
 import io.crate.expression.operator.EqOperator;
@@ -82,11 +81,10 @@ import io.crate.sql.tree.JoinType;
  * b -> Edge[a, a.x, b.y]
  * </pre>
  */
-public record JoinGraph(
-    List<LogicalPlan> nodes,
-    Map<LogicalPlan, Set<Edge>> edges,
-    List<Symbol> filters,
-    boolean hasCrossJoin) {
+public record JoinGraph(List<LogicalPlan> nodes,
+                        Map<LogicalPlan, Set<Edge>> edges,
+                        List<Symbol> filters,
+                        boolean hasCrossJoin) {
 
     public record Edge(LogicalPlan to, Symbol left, Symbol right) {}
 
@@ -95,9 +93,9 @@ public record JoinGraph(
             assert !edges.containsKey(node) : "LogicalPlan" + node + " can't be in both graphs";
         }
 
-        var newNodes = Lists2.concat(this.nodes, other.nodes);
+        var newNodes = Lists.concat(this.nodes, other.nodes);
         var newEdges = Maps.merge(this.edges, other.edges, Sets::union);
-        var newFilters = Lists2.concat(this.filters, other.filters);
+        var newFilters = Lists.concat(this.filters, other.filters);
         var hasCrossJoin = this.hasCrossJoin || other.hasCrossJoin();
 
         return new JoinGraph(
@@ -114,12 +112,15 @@ public record JoinGraph(
     }
 
     JoinGraph withFilters(List<Symbol> filters) {
-        var newFilters = Lists2.concat(this.filters, filters);
+        if (filters.isEmpty()) {
+            return this;
+        }
+        var newFilters = Lists.concat(this.filters, filters);
         return new JoinGraph(this.nodes, edges, newFilters, this.hasCrossJoin);
     }
 
-    JoinGraph withCrossJoin(boolean hasCrossJoin) {
-        return new JoinGraph(this.nodes, edges, filters, hasCrossJoin);
+    JoinGraph withCrossJoin() {
+        return new JoinGraph(this.nodes, edges, filters, true);
     }
 
     public int size() {
@@ -134,15 +135,15 @@ public record JoinGraph(
         return result;
     }
 
-    public static JoinGraph create(LogicalPlan plan, Function<LogicalPlan, LogicalPlan> resolvePlan) {
+    public static JoinGraph create(LogicalPlan plan, UnaryOperator<LogicalPlan> resolvePlan) {
         return plan.accept(new GraphBuilder(resolvePlan), new HashMap<>());
     }
 
     private static class GraphBuilder extends LogicalPlanVisitor<Map<Symbol, LogicalPlan>, JoinGraph> {
 
-        private final Function<LogicalPlan, LogicalPlan> resolvePlan;
+        private final UnaryOperator<LogicalPlan> resolvePlan;
 
-        GraphBuilder(Function<LogicalPlan, LogicalPlan> resolvePlan) {
+        GraphBuilder(UnaryOperator<LogicalPlan> resolvePlan) {
             this.resolvePlan = resolvePlan;
         }
 
@@ -172,7 +173,7 @@ public record JoinGraph(
             var right = joinPlan.rhs().accept(this, context);
 
             if (joinPlan.joinType() == JoinType.CROSS) {
-                return left.joinWith(right).withCrossJoin(true);
+                return left.joinWith(right).withCrossJoin();
             }
 
             if (joinPlan.joinType() != JoinType.INNER) {
@@ -181,6 +182,7 @@ public record JoinGraph(
 
             var joinCondition = joinPlan.joinCondition();
             var edgeCollector = new EdgeCollector();
+            var filters = new ArrayList<Symbol>();
             if (joinCondition != null) {
                 var split = QuerySplitter.split(joinCondition);
                 for (var entry : split.entrySet()) {
@@ -191,10 +193,12 @@ public record JoinGraph(
                     // two keys.
                     if (entry.getKey().size() == 2) {
                         entry.getValue().accept(edgeCollector, context);
+                    } else {
+                        filters.add(entry.getValue());
                     }
                 }
             }
-            return left.joinWith(right).withEdges(edgeCollector.edges);
+            return left.joinWith(right).withEdges(edgeCollector.edges).withFilters(filters);
         }
 
         private static class EdgeCollector extends SymbolVisitor<Map<Symbol, LogicalPlan>, Void> {

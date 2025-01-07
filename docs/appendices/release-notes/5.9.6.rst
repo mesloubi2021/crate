@@ -1,0 +1,81 @@
+.. _version_5.9.6:
+
+=============
+Version 5.9.6
+=============
+
+
+Released on 2024-12-23.
+
+.. NOTE::
+    If you are upgrading a cluster, you must be running CrateDB 4.0.2 or higher
+    before you upgrade to 5.9.6.
+
+    We recommend that you upgrade to the latest 5.8 release before moving to
+    5.9.6.
+
+    A rolling upgrade from 5.8.x to 5.9.6 is supported.
+
+    Before upgrading, you should `back up your data`_.
+
+.. WARNING::
+
+    Tables that were created before CrateDB 4.x will not function with 5.x
+    and must be recreated before moving to 5.x.x.
+
+    You can recreate tables using ``COPY TO`` and ``COPY FROM`` or by
+    `inserting the data into a new table`_.
+
+.. _back up your data: https://crate.io/docs/crate/reference/en/latest/admin/snapshots.html
+
+.. _inserting the data into a new table: https://crate.io/docs/crate/reference/en/latest/admin/system-information.html#tables-need-to-be-recreated
+
+.. rubric:: Table of contents
+
+.. contents::
+   :local:
+
+See the :ref:`version_5.9.0` release notes for a full list of changes in the
+5.9 series.
+
+Fixes
+=====
+
+- Fixed an ``EXPLAIN ANALYZE INSERT ...`` statement to throw an exception as it
+  is not supported.
+
+- Fixed a performance issue in transaction log replay, where the TranslogIndexer
+  object was being recreated for each operation rather than being shared between
+  all operations on a shard.
+
+- Fixed a possible deadlock where concurrent delete requests could take a lock
+  but then never release it, leading to requests timing out and threads parked
+  in infinite waits.
+
+- Fixed a regression introduced with :ref:`version_5.6.0` which caused the
+  :ref:`percentile() <aggregation-percentile>` aggregation function to return
+  results with high deviations for some data sets and data distribution. By the
+  added support for passing in an optional 3rd ``compression`` parameter to the
+  :ref:`percentile() <aggregation-percentile>` aggregation function, the
+  accuracy of the result can be now controlled and adjusted to the user's needs.
+  Be aware that higher ``compression`` values will lead to slightly higher memory
+  consumption.
+
+- Fixed a regression introduced with :ref:`version_5.8.5` which caused queries
+  containing a symbol pointing to an ignored column or dynamic system column of
+  an aliased relation to fail with an planner error. This happens only if the
+  related symbol was used multiple times, e.g. as a select item and inside the
+  where clause. Example::
+
+    SELECT values['ts_month']
+    FROM information_schema.table_partitions alias
+    WHERE values['ts_month'] = '2022-08-01'
+
+
+- Fixed a ``ColumnUnknownException`` thrown when querying a user-defined table
+  setting. For example ::
+
+      CREATE TABLE t (a INT) WITH ("routing.allocation.exclude.foo" = 'bar')
+      SELECT settings['routing']['allocation']['exclude']['foo'] FROM information_schema.tables WHERE table_name = 't';
+      ColumnUnknownException[Column settings['routing']['allocation']['exclude']['foo'] unknown]
+

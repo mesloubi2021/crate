@@ -21,9 +21,9 @@
 
 package io.crate.planner.optimizer.matcher;
 
-import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 import io.crate.planner.operators.LogicalPlan;
 
@@ -33,7 +33,7 @@ public abstract class Pattern<T> {
         return new TypeOfPattern<>(expectedClass);
     }
 
-    public <U, V> Pattern<T> with(Function<? super T, Optional<U>> getProperty, Pattern<V> propertyPattern) {
+    public <U, V> Pattern<T> with(Function<? super T, U> getProperty, Pattern<V> propertyPattern) {
         return new WithPattern<>(this, getProperty, propertyPattern);
     }
 
@@ -45,10 +45,9 @@ public abstract class Pattern<T> {
         return new CapturePattern<>(capture, this);
     }
 
-    public abstract Match<T> accept(Object object, Captures captures, Function<LogicalPlan, LogicalPlan> resolvePlan);
+    public abstract Match<T> accept(Object object, Captures captures, UnaryOperator<LogicalPlan> resolvePlan);
 
     public Match<T> accept(Object object, Captures captures) {
-        return accept(object, captures, Function.identity());
+        return accept(object, captures, UnaryOperator.identity());
     }
-
 }

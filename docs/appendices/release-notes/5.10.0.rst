@@ -1,17 +1,11 @@
 .. _version_5.10.0:
 
-===========================
-Version 5.10.0 - Unreleased
-===========================
+==============
+Version 5.10.0
+==============
 
-.. comment 1. Remove the " - Unreleased" from the header above and adjust the ==
-.. comment 2. Remove the NOTE below and replace with: "Released on 20XX-XX-XX."
-.. comment    (without a NOTE entry, simply starting from col 1 of the line)
-.. NOTE::
 
-    In development. 5.10.0 isn't released yet. These are the release notes for
-    the upcoming release.
-
+Released on 2025-01-21.
 
 .. NOTE::
 
@@ -139,6 +133,10 @@ Performance and Resilience Improvements
   or it can be removed explicitly by an ``OPTIMIZE`` operation after indexing
   to a table or partition has completed.
 
+- Lowered the default ``max_concurrency`` and ``queue_size``
+  :ref:`overload_protection` values, this should help cluster stability without
+  slowing down operations.
+
 Administration and Operations
 -----------------------------
 
@@ -158,6 +156,9 @@ Administration and Operations
 
 - Updated :ref:`statement_timeout setting <conf-session-statement-timeout>` to
   also account for parsing, analysis and planning phases.
+
+- Added a ``policy`` sub-column to ``column_details`` in the
+  ``information_schema.columns`` table.
 
 Client interfaces
 -----------------

@@ -75,7 +75,7 @@ public abstract class StoredRowLookup implements StoredRow {
         if (shardCreatedVersion.before(PARTIAL_STORED_SOURCE_VERSION) || fromTranslog) {
             return new FullStoredRowLookup(table, indexName, columns);
         }
-        return new ColumnAndStoredRowLookup(table, indexName, columns);
+        return new ColumnAndStoredRowLookup(table, shardCreatedVersion, indexName, columns);
     }
 
     private StoredRowLookup(DocTableInfo table, String indexName) {
@@ -158,7 +158,7 @@ public abstract class StoredRowLookup implements StoredRow {
         // On build source map, load via StoredFieldsVisitor and pass to SourceParser
         @Override
         public Map<String, Object> asMap() {
-            if (docVisited == false) {
+            if (parsedSource == null) {
                 parsedSource = partitionValueInjector.injectValues(sourceParser.parse(loadStoredFields()));
             }
             return parsedSource;
@@ -166,11 +166,8 @@ public abstract class StoredRowLookup implements StoredRow {
 
         @Override
         public String asRaw() {
-            if (docVisited == false) {
-                loadStoredFields();
-            }
             try {
-                return CompressorFactory.uncompressIfNeeded(fieldsVisitor.source()).utf8ToString();
+                return CompressorFactory.uncompressIfNeeded(loadStoredFields()).utf8ToString();
             } catch (IOException e) {
                 throw new UncheckedIOException("Failed to decompress source", e);
             }
@@ -179,8 +176,10 @@ public abstract class StoredRowLookup implements StoredRow {
 
         private BytesReference loadStoredFields() {
             try {
-                readerContext.visitDocument(doc, fieldsVisitor);
-                docVisited = true;
+                if (docVisited == false) {
+                    readerContext.visitDocument(doc, fieldsVisitor);
+                    docVisited = true;
+                }
                 return fieldsVisitor.source();
             } catch (IOException e) {
                 throw new RuntimeException(e);
@@ -195,9 +194,9 @@ public abstract class StoredRowLookup implements StoredRow {
         private final List<ColumnExpression> expressions = new ArrayList<>();
         private final ColumnFieldVisitor fieldsVisitor;
 
-        private ColumnAndStoredRowLookup(DocTableInfo table, String indexName, List<Symbol> columns) {
+        private ColumnAndStoredRowLookup(DocTableInfo table, Version shardVersionCreated, String indexName, List<Symbol> columns) {
             super(table, indexName);
-            this.fieldsVisitor = new ColumnFieldVisitor(table);
+            this.fieldsVisitor = new ColumnFieldVisitor(table, shardVersionCreated);
             register(columns);
         }
 
